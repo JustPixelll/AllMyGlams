@@ -6,6 +6,7 @@ namespace AllMyGlams.Services;
 public sealed class GameDataService
 {
     private readonly Dictionary<ulong, ItemRecord> itemsById = [];
+    private readonly Dictionary<string, List<ItemRecord>> itemsByName = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<ItemRecord> items = [];
     private readonly List<StainRecord> stains = [];
     private readonly HashSet<string> wearableNames = new(StringComparer.OrdinalIgnoreCase);
@@ -31,6 +32,9 @@ public sealed class GameDataService
             items.Add(record);
             itemsById[item.RowId] = record;
             wearableNames.Add(name);
+            if (!itemsByName.TryGetValue(name, out var named))
+                itemsByName[name] = named = [];
+            named.Add(record);
 
             foreach (var slot in GlamSlots.Ordered)
                 if (Fits(category, slot))
@@ -57,6 +61,9 @@ public sealed class GameDataService
 
     public ItemRecord? GetItem(ulong itemId)
         => itemsById.GetValueOrDefault(itemId);
+
+    public IReadOnlyList<ItemRecord> GetItemsByName(string itemName)
+        => itemsByName.TryGetValue(itemName.Trim(), out var found) ? found : [];
 
     public StainRecord GetStain(byte id)
         => stains.FirstOrDefault(x => x.Id == id) ?? new StainRecord(id, id == 0 ? "None" : $"Dye #{id}");
