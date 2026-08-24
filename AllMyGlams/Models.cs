@@ -57,14 +57,17 @@ public sealed class OutfitSlot
     public ulong ItemId { get; set; }
     public byte Stain1 { get; set; }
     public byte Stain2 { get; set; }
-    public bool Apply { get; set; }
+
+    // Kept for backwards-compatible config loading from v0.1. The v0.2 dresser is a
+    // complete look, so every equipment slot is always applied, including explicit None.
+    public bool Apply { get; set; } = true;
 
     public OutfitSlot Clone() => new()
     {
         ItemId = ItemId,
         Stain1 = Stain1,
         Stain2 = Stain2,
-        Apply = Apply,
+        Apply = true,
     };
 }
 
@@ -90,11 +93,15 @@ public sealed class OutfitRecord
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public string Name { get; set; } = "New Outfit";
+
+    // Legacy v0.1 field. Favorites are now ordinary wardrobe entries, but retaining the
+    // field prevents old configs from losing data during deserialization.
     public bool Favorite { get; set; }
+
     public Dictionary<GlamSlot, OutfitSlot> Slots { get; set; } = CreateBlankSlots();
     public List<PenumbraModRecipe> Mods { get; set; } = [];
 
-    // Sourced wardrobe metadata. Local outfits leave these empty.
+    // Sourced wardrobe metadata. Local outfits leave these empty/default.
     public string SourceName { get; set; } = "Local";
     public string? SourceExternalId { get; set; }
     public string? SourceUrl { get; set; }
@@ -105,14 +112,18 @@ public sealed class OutfitRecord
     public static OutfitRecord CreateBlank(string name = "New Outfit") => new() { Name = name };
 
     public static Dictionary<GlamSlot, OutfitSlot> CreateBlankSlots()
-        => GlamSlots.Ordered.ToDictionary(x => x, _ => new OutfitSlot());
+        => GlamSlots.Ordered.ToDictionary(x => x, _ => new OutfitSlot { Apply = true });
 
     public void EnsureSlots()
     {
         Slots ??= CreateBlankSlots();
         Mods ??= [];
         foreach (var slot in GlamSlots.Ordered)
-            Slots.TryAdd(slot, new OutfitSlot());
+        {
+            if (!Slots.TryGetValue(slot, out var value))
+                Slots[slot] = value = new OutfitSlot();
+            value.Apply = true;
+        }
     }
 
     public OutfitRecord Clone(bool newId = true)
@@ -122,7 +133,7 @@ public sealed class OutfitRecord
         {
             Id = newId ? Guid.NewGuid() : Id,
             Name = Name,
-            Favorite = Favorite,
+            Favorite = false,
             Slots = Slots.ToDictionary(x => x.Key, x => x.Value.Clone()),
             Mods = Mods.Select(x => x.Clone()).ToList(),
             SourceName = SourceName,
