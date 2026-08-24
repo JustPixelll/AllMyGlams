@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project Sdk="Dalamud.NET.Sdk/15.0.0">
+  <PropertyGroup>
+    <Version>0.1.0.0</Version>
+    <Author>JustPixelll</Author>
+    <Name>All My Glams</Name>
+    <Punchline>Your glamour, Glamourer and Penumbra outfit workspace.</Punchline>
+    <Description>Build equipment-only glamour designs, capture and apply looks through Glamourer, keep a local favourites wardrobe, and manage equipment-affecting Penumbra mods from one UI.</Description>
+    <RepoUrl>https://github.com/JustPixelll/AllMyGlams</RepoUrl>
+    <Tags>glamour;glamourer;penumbra;mods;wardrobe;utility</Tags>
+    <CategoryTags>utility;other</CategoryTags>
+    <Changelog>Initial experimental scaffold.</Changelog>
+    <AcceptsFeedback>true</AcceptsFeedback>
+    <FeedbackMessage>Please report bugs and feature requests on GitHub.</FeedbackMessage>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+</Project>
