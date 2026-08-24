@@ -18,6 +18,7 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static IDataManager DataManager { get; private set; } = null!;
     [PluginService] internal static IObjectTable ObjectTable { get; private set; } = null!;
     [PluginService] internal static IClientState ClientState { get; private set; } = null!;
+    [PluginService] internal static IFramework Framework { get; private set; } = null!;
     [PluginService] internal static ITextureProvider TextureProvider { get; private set; } = null!;
     [PluginService] internal static IPluginLog Log { get; private set; } = null!;
 
@@ -50,6 +51,7 @@ public sealed class Plugin : IDalamudPlugin
         PluginInterface.UiBuilder.OpenMainUi += OpenMainUi;
         PluginInterface.UiBuilder.OpenConfigUi += OpenMainUi;
         ClientState.Login += OnLogin;
+        Framework.Update += OnFrameworkUpdate;
 
         // Glamourer can be refreshed even before the character exists; Penumbra and the
         // live dresser are also populated immediately when the plugin is loaded in-game.
@@ -58,6 +60,7 @@ public sealed class Plugin : IDalamudPlugin
 
     public void Dispose()
     {
+        Framework.Update -= OnFrameworkUpdate;
         ClientState.Login -= OnLogin;
         PluginInterface.UiBuilder.Draw -= WindowSystem.Draw;
         PluginInterface.UiBuilder.OpenMainUi -= OpenMainUi;
@@ -82,6 +85,7 @@ public sealed class Plugin : IDalamudPlugin
         return objectIndex >= 0;
     }
 
+    private void OnFrameworkUpdate(IFramework framework) => mainWindow.TickLiveDresser();
     private void OnLogin() => mainWindow.RefreshFromIntegrations(true);
 
     private void OnCommand(string command, string args)
