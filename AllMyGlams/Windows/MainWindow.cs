@@ -1,6 +1,6 @@
 using System.Numerics;
+using AllMyGlams.Services;
 using Dalamud.Bindings.ImGui;
-using Dalamud.Interface.Textures;
 using Dalamud.Interface.Utility;
 using Dalamud.Interface.Windowing;
 
@@ -9,13 +9,20 @@ namespace AllMyGlams.Windows;
 public sealed partial class MainWindow : Window, IDisposable
 {
     private readonly Plugin plugin;
-    private OutfitRecord working = OutfitRecord.CreateBlank("My Outfit");
+    private OutfitRecord working = OutfitRecord.CreateBlank("Game Look");
     private string status = "Ready.";
     private GlamSlot? pickerSlot;
     private string itemSearch = string.Empty;
     private string librarySearch = string.Empty;
     private string modSearch = string.Empty;
+    private string eorzeaInput = string.Empty;
     private bool requestOpenItemPicker;
+    private bool workingDirty;
+    private bool workingNameIsSource = true;
+    private bool requestOverwritePopup;
+    private OutfitRecord? pendingOverwrite;
+    private Guid pendingOverwriteId;
+    private Task<EorzeaImportResult>? eorzeaImportTask;
 
     public MainWindow(Plugin plugin)
         : base("All My Glams##AllMyGlams")
@@ -23,7 +30,7 @@ public sealed partial class MainWindow : Window, IDisposable
         this.plugin = plugin;
         SizeConstraints = new WindowSizeConstraints
         {
-            MinimumSize = new Vector2(780, 560),
+            MinimumSize = new Vector2(820, 580),
             MaximumSize = new Vector2(float.MaxValue, float.MaxValue),
         };
     }
@@ -32,8 +39,28 @@ public sealed partial class MainWindow : Window, IDisposable
     {
     }
 
+    public void RefreshFromIntegrations(bool forceDresser)
+    {
+        var messages = new List<string>();
+        if (plugin.Glamourer.RefreshDesigns(out var glamourerMessage))
+            messages.Add(glamourerMessage);
+
+        if (TryPlayerIndex(out var index))
+        {
+            if (plugin.Penumbra.Refresh(index, plugin.GameData, out var penumbraMessage))
+                messages.Add(penumbraMessage);
+
+            if (forceDresser)
+                CaptureLiveLook("Game Look", index);
+        }
+
+        if (messages.Count > 0 && !forceDresser)
+            status = string.Join(" ", messages);
+    }
+
     public override void Draw()
     {
+        ProcessEorzeaImport();
         DrawHeader();
         ImGui.Separator();
 
@@ -53,13 +80,7 @@ public sealed partial class MainWindow : Window, IDisposable
 
             if (ImGui.BeginTabItem("Wardrobe"))
             {
-                DrawLibraryTab(false);
-                ImGui.EndTabItem();
-            }
-
-            if (ImGui.BeginTabItem("Favorites"))
-            {
-                DrawLibraryTab(true);
+                DrawWardrobeTab();
                 ImGui.EndTabItem();
             }
 
@@ -69,21 +90,16 @@ public sealed partial class MainWindow : Window, IDisposable
                 ImGui.EndTabItem();
             }
 
-            if (ImGui.BeginTabItem("Sources"))
-            {
-                DrawSourcesTab();
-                ImGui.EndTabItem();
-            }
-
             ImGui.EndTabBar();
         }
 
         DrawItemPicker();
+        DrawOverwritePopup();
     }
 
     private void DrawHeader()
     {
-        ImGui.TextWrapped("Build vanilla gear looks, reuse existing Glamourer designs, save a local wardrobe, and manage outfit-related Penumbra mods from one place.");
+        ImGui.TextWrapped("The Dresser is the editor; your character is the viewer. Every equipment slot is explicit, including None. Glamourer and Penumbra lists refresh automatically when All My Glams loads, with manual refresh buttons still available.");
         ImGui.Spacing();
         ImGui.TextDisabled(status);
     }
@@ -95,51 +111,38 @@ public sealed partial class MainWindow : Window, IDisposable
         var outfitName = working.Name;
         ImGui.SetNextItemWidth(360 * ImGuiHelpers.GlobalScale);
         if (ImGui.InputTextWithHint("##outfitName", "Outfit name", ref outfitName, 100))
+        {
             working.Name = outfitName;
+            workingNameIsSource = false;
+        }
 
-        if (ImGui.Button("Detect from Glamourer"))
-            CaptureFromGlamourer();
+        if (ImGui.Button("Apply Dresser to Character"))
+        {
+            ApplyWholeLook(working);
+            workingDirty = false;
+        }
 
         ImGui.SameLine();
-        if (ImGui.Button("Apply Gear"))
-            ApplyWorking();
+        if (ImGui.Button("Revert to Game"))
+            RevertToGame();
 
-        if (working.Mods.Count > 0)
-        {
-            ImGui.SameLine();
-            if (ImGui.Button($"Apply Look (+{working.Mods.Count} Mods)"))
-                ApplyWholeLook(working);
-        }
+        ImGui.SameLine();
+        if (ImGui.Button("Save to Wardrobe"))
+            RequestSaveWorkingToWardrobe();
 
         ImGui.SameLine();
         if (ImGui.Button("Save to Glamourer"))
             SaveWorkingToGlamourer();
 
-        ImGui.SameLine();
-        if (ImGui.Button("Save to Wardrobe"))
-            SaveWorkingToLibrary(false);
-
-        ImGui.SameLine();
-        if (ImGui.Button("Favorite"))
-            SaveWorkingToLibrary(true);
-
-        ImGui.SameLine();
-        if (ImGui.Button("New / Clear"))
-        {
-            working = OutfitRecord.CreateBlank("My Outfit");
-            status = "Started a blank outfit.";
-        }
-
         ImGui.Spacing();
-        ImGui.TextDisabled($"{working.Mods.Count} attached Penumbra mod recipe(s). Apply controls whether each gear slot is included; disabled slots leave the current appearance untouched.");
+        ImGui.TextDisabled($"Complete look · {working.Mods.Count} attached Penumbra mod recipe(s){(workingDirty ? " · edited" : string.Empty)}");
         ImGui.Spacing();
 
-        if (ImGui.BeginTable("##dresserTable", 7,
+        if (ImGui.BeginTable("##dresserTable", 6,
                 ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.Resizable | ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.ScrollY,
                 new Vector2(0, -1)))
         {
-            ImGui.TableSetupColumn("Use", ImGuiTableColumnFlags.WidthFixed, 45 * ImGuiHelpers.GlobalScale);
-            ImGui.TableSetupColumn("Slot", ImGuiTableColumnFlags.WidthFixed, 90 * ImGuiHelpers.GlobalScale);
+            ImGui.TableSetupColumn("Slot", ImGuiTableColumnFlags.WidthFixed, 95 * ImGuiHelpers.GlobalScale);
             ImGui.TableSetupColumn("Icon", ImGuiTableColumnFlags.WidthFixed, 50 * ImGuiHelpers.GlobalScale);
             ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthStretch);
             ImGui.TableSetupColumn("Dye 1", ImGuiTableColumnFlags.WidthFixed, 150 * ImGuiHelpers.GlobalScale);
@@ -149,17 +152,9 @@ public sealed partial class MainWindow : Window, IDisposable
 
             foreach (var slot in GlamSlots.Ordered)
             {
-                if (!plugin.Configuration.ShowAccessories && slot is GlamSlot.Ears or GlamSlot.Neck or GlamSlot.Wrists or GlamSlot.RFinger or GlamSlot.LFinger)
-                    continue;
-
                 var value = working.Slots[slot];
                 ImGui.PushID($"dresser-{slot}");
                 ImGui.TableNextRow();
-
-                ImGui.TableNextColumn();
-                var apply = value.Apply;
-                if (ImGui.Checkbox("##apply", ref apply))
-                    value.Apply = apply;
 
                 ImGui.TableNextColumn();
                 ImGui.AlignTextToFramePadding();
@@ -170,7 +165,7 @@ public sealed partial class MainWindow : Window, IDisposable
 
                 ImGui.TableNextColumn();
                 var item = plugin.GameData.GetItem(value.ItemId);
-                var label = item?.Name ?? (value.ItemId == 0 ? "Select item..." : $"Unknown item #{value.ItemId}");
+                var label = item?.Name ?? (value.ItemId == 0 ? "None" : $"Unknown item #{value.ItemId}");
                 if (ImGui.Button($"{label}##pick", new Vector2(-1, 0)))
                 {
                     pickerSlot = slot;
@@ -179,18 +174,25 @@ public sealed partial class MainWindow : Window, IDisposable
                 }
 
                 ImGui.TableNextColumn();
+                var oldStain1 = value.Stain1;
                 value.Stain1 = DrawStainCombo("##stain1", value.Stain1);
+                if (oldStain1 != value.Stain1)
+                    MarkWorkingChanged();
 
                 ImGui.TableNextColumn();
+                var oldStain2 = value.Stain2;
                 value.Stain2 = DrawStainCombo("##stain2", value.Stain2);
+                if (oldStain2 != value.Stain2)
+                    MarkWorkingChanged();
 
                 ImGui.TableNextColumn();
-                if (ImGui.SmallButton("Clear"))
+                if (ImGui.SmallButton("None"))
                 {
                     value.ItemId = 0;
                     value.Stain1 = 0;
                     value.Stain2 = 0;
-                    value.Apply = false;
+                    value.Apply = true;
+                    MarkWorkingChanged();
                 }
 
                 ImGui.PopID();
@@ -200,93 +202,102 @@ public sealed partial class MainWindow : Window, IDisposable
         }
     }
 
-    private void DrawLibraryTab(bool favoritesOnly)
+    private void DrawWardrobeTab()
     {
-        ImGui.SetNextItemWidth(330 * ImGuiHelpers.GlobalScale);
-        ImGui.InputTextWithHint("##librarySearch", "Search saved outfits...", ref librarySearch, 100);
-        ImGui.SameLine();
-        ImGui.TextDisabled(favoritesOnly ? "Favorites are saved locally." : $"{plugin.Configuration.Library.Count} saved outfit(s)");
+        ImGui.SetNextItemWidth(360 * ImGuiHelpers.GlobalScale);
+        ImGui.InputTextWithHint("##librarySearch", "Search wardrobe, author or source...", ref librarySearch, 100);
         ImGui.Spacing();
 
-        var delete = (Guid?)null;
-        var outfits = plugin.Configuration.Library
-            .Where(x => !favoritesOnly || x.Favorite)
-            .Where(x => string.IsNullOrWhiteSpace(librarySearch)
-                        || x.Name.Contains(librarySearch, StringComparison.CurrentCultureIgnoreCase)
-                        || x.SourceName.Contains(librarySearch, StringComparison.CurrentCultureIgnoreCase)
-                        || (x.SourceAuthor?.Contains(librarySearch, StringComparison.CurrentCultureIgnoreCase) ?? false))
-            .OrderByDescending(x => x.Favorite)
-            .ThenBy(x => x.Name, StringComparer.CurrentCultureIgnoreCase)
-            .ToList();
+        if (ImGui.CollapsingHeader("My Wardrobe"))
+        {
+            var local = plugin.Configuration.Library
+                .Where(x => !string.Equals(x.SourceName, "Eorzea Collection", StringComparison.OrdinalIgnoreCase))
+                .Where(MatchesLibrarySearch)
+                .OrderBy(x => x.Name, StringComparer.CurrentCultureIgnoreCase)
+                .ToList();
 
+            ImGui.TextDisabled($"{local.Count} saved look(s)");
+            DrawWardrobeEntries(local, false);
+        }
+
+        ImGui.Spacing();
+        if (ImGui.CollapsingHeader("Public Wardrobe — Eorzea Collection"))
+        {
+            ImGui.TextWrapped("On-demand import only: paste an individual Eorzea Collection glamour URL. All My Glams downloads no screenshots, stores the resolved item/dye recipe locally, keeps creator/source attribution, and only contacts EC again when you explicitly import or refresh. It will not bypass a 403 or other access control.");
+            ImGui.Spacing();
+
+            ImGui.SetNextItemWidth(560 * ImGuiHelpers.GlobalScale);
+            var enter = ImGui.InputTextWithHint("##ecUrl", "https://ffxiv.eorzeacollection.com/glamour/123456/name", ref eorzeaInput, 512, ImGuiInputTextFlags.EnterReturnsTrue);
+            ImGui.SameLine();
+            var importing = eorzeaImportTask is not null;
+            if (importing)
+            {
+                ImGui.BeginDisabled();
+                ImGui.Button("Importing...");
+                ImGui.EndDisabled();
+            }
+            else if (ImGui.Button("Import") || enter)
+            {
+                StartEorzeaImport(eorzeaInput);
+            }
+
+            ImGui.Spacing();
+            var publicEntries = plugin.Configuration.Library
+                .Where(x => string.Equals(x.SourceName, "Eorzea Collection", StringComparison.OrdinalIgnoreCase))
+                .Where(MatchesLibrarySearch)
+                .OrderBy(x => x.Name, StringComparer.CurrentCultureIgnoreCase)
+                .ToList();
+
+            ImGui.TextDisabled($"{publicEntries.Count} cached public look(s)");
+            DrawWardrobeEntries(publicEntries, true);
+        }
+    }
+
+    private void DrawWardrobeEntries(List<OutfitRecord> outfits, bool publicSource)
+    {
+        Guid? delete = null;
         foreach (var outfit in outfits)
         {
             outfit.EnsureSlots();
             ImGui.PushID(outfit.Id.ToString());
 
-            var favorite = outfit.Favorite;
-            if (ImGui.Checkbox("★##favorite", ref favorite))
-            {
-                outfit.Favorite = favorite;
-                plugin.Configuration.Save();
-            }
-
-            ImGui.SameLine();
-            var appliedSlots = outfit.Slots.Count(x => x.Value.Apply);
             ImGui.TextUnformatted(outfit.Name);
-            ImGui.SameLine();
-            ImGui.TextDisabled($"{appliedSlots} slot(s) · {outfit.SourceName}{(outfit.Mods.Count > 0 ? $" · {outfit.Mods.Count} mod(s)" : string.Empty)}");
-
             if (!string.IsNullOrWhiteSpace(outfit.SourceAuthor))
             {
                 ImGui.SameLine();
                 ImGui.TextDisabled($"by {outfit.SourceAuthor}");
             }
 
-            if (ImGui.SmallButton("Load into Dresser"))
-            {
-                working = outfit.Clone(false);
-                status = $"Loaded '{outfit.Name}' into the Dresser.";
-            }
-
             ImGui.SameLine();
-            if (ImGui.SmallButton("Apply Gear"))
-                ApplyOutfit(outfit);
+            ImGui.TextDisabled($"{outfit.Mods.Count} mod(s)");
 
-            if (outfit.Mods.Count > 0)
+            if (ImGui.SmallButton("Wear / Edit"))
             {
-                ImGui.SameLine();
-                if (ImGui.SmallButton("Apply Look"))
-                    ApplyWholeLook(outfit);
+                working = outfit.Clone();
+                workingNameIsSource = true;
+                workingDirty = false;
+                ApplyWholeLook(working);
             }
 
             ImGui.SameLine();
             if (ImGui.SmallButton("Save to Glamourer"))
                 SaveOutfitToGlamourer(outfit);
 
-            ImGui.SameLine();
-            if (ImGui.SmallButton("Duplicate"))
+            if (publicSource && !string.IsNullOrWhiteSpace(outfit.SourceUrl))
             {
-                var clone = outfit.Clone();
-                clone.Name += " Copy";
-                plugin.Configuration.Library.Add(clone);
-                plugin.Configuration.Save();
-                status = $"Duplicated '{outfit.Name}'.";
+                ImGui.SameLine();
+                if (ImGui.SmallButton("Refresh Source"))
+                    StartEorzeaImport(outfit.SourceUrl!);
             }
 
             ImGui.SameLine();
-            if (ImGui.SmallButton("Delete"))
+            if (ImGui.SmallButton(publicSource ? "Remove Cache" : "Delete"))
                 delete = outfit.Id;
 
-            if (!string.IsNullOrWhiteSpace(outfit.SourceUrl))
-            {
-                ImGui.TextDisabled($"Source: {outfit.SourceUrl}");
-                if (outfit.SourceRating is not null)
-                {
-                    ImGui.SameLine();
-                    ImGui.TextDisabled($"Rating: {outfit.SourceRating}");
-                }
-            }
+            if (!string.IsNullOrWhiteSpace(outfit.SourceName) && !string.Equals(outfit.SourceName, "Local", StringComparison.OrdinalIgnoreCase))
+                ImGui.TextDisabled($"Source: {outfit.SourceName}{(string.IsNullOrWhiteSpace(outfit.SourceUrl) ? string.Empty : $" · {outfit.SourceUrl}")}");
+            if (outfit.SourceLastRefreshed is not null)
+                ImGui.TextDisabled($"Fetched: {outfit.SourceLastRefreshed:yyyy-MM-dd HH:mm} UTC");
 
             ImGui.Separator();
             ImGui.PopID();
@@ -296,9 +307,15 @@ public sealed partial class MainWindow : Window, IDisposable
         {
             plugin.Configuration.Library.RemoveAll(x => x.Id == id);
             plugin.Configuration.Save();
-            status = "Removed saved outfit.";
+            status = publicSource ? "Removed cached public look." : "Removed wardrobe look.";
         }
     }
+
+    private bool MatchesLibrarySearch(OutfitRecord outfit)
+        => string.IsNullOrWhiteSpace(librarySearch)
+           || outfit.Name.Contains(librarySearch, StringComparison.CurrentCultureIgnoreCase)
+           || outfit.SourceName.Contains(librarySearch, StringComparison.CurrentCultureIgnoreCase)
+           || (outfit.SourceAuthor?.Contains(librarySearch, StringComparison.CurrentCultureIgnoreCase) ?? false);
 
     private void DrawModsTab()
     {
@@ -319,17 +336,15 @@ public sealed partial class MainWindow : Window, IDisposable
         }
 
         ImGui.SameLine();
-        if (ImGui.Button("Attach enabled equipment mods to outfit"))
+        if (ImGui.Button("Use current enabled gear mods in Dresser"))
         {
-            working.Mods = plugin.Penumbra.Mods
-                .Where(x => x.Enabled && x.AffectsEquipment)
-                .Select(ToRecipe)
-                .ToList();
-            status = $"Attached {working.Mods.Count} enabled equipment-related Penumbra mod(s) to the working outfit.";
+            working.Mods = CaptureActiveModRecipes();
+            MarkWorkingChanged();
+            status = $"Dresser now contains {working.Mods.Count} enabled equipment-related Penumbra mod recipe(s).";
         }
 
         ImGui.Spacing();
-        ImGui.TextDisabled("Equipment detection uses Penumbra's Changed Items data and matches named changed items against wearable FFXIV item names. Expand a mod to inspect exactly what Penumbra reports.");
+        ImGui.TextDisabled("Equipment detection uses Penumbra Changed Items and matches named changed items against wearable FFXIV items. Expand a mod to inspect what Penumbra reports.");
         ImGui.Spacing();
 
         var visible = plugin.Penumbra.Mods.Where(x =>
@@ -372,7 +387,7 @@ public sealed partial class MainWindow : Window, IDisposable
                 ImGui.TextDisabled($"Directory: {mod.Directory}");
                 ImGui.TextDisabled($"Changed items: {mod.ChangedItems.Count}");
 
-                if (ImGui.SmallButton("Attach this mod to working outfit"))
+                if (ImGui.SmallButton("Attach this mod to Dresser"))
                     AttachModToWorking(mod);
 
                 ImGui.SameLine();
@@ -406,36 +421,6 @@ public sealed partial class MainWindow : Window, IDisposable
         }
     }
 
-    private void DrawSourcesTab()
-    {
-        ImGui.TextWrapped("Sourced Wardrobe is the home for imported public glamour recipes such as Eorzea Collection looks. Imported entries keep attribution and their source URL, but the resolved item/dye recipe lives in AllMyGlams so applying it later does not require another network request.");
-        ImGui.Spacing();
-        ImGui.TextWrapped("The provider layer is intentionally separate from the dresser. This lets us add an explicitly disclosed, cached Eorzea Collection importer without making the core wardrobe depend on scraping or image hotlinking.");
-        ImGui.Spacing();
-
-        var sourced = plugin.Configuration.Library.Where(x => !string.Equals(x.SourceName, "Local", StringComparison.OrdinalIgnoreCase)).ToList();
-        ImGui.TextDisabled($"Cached sourced outfits: {sourced.Count}");
-
-        foreach (var outfit in sourced)
-        {
-            ImGui.PushID($"source-{outfit.Id}");
-            ImGui.TextUnformatted(outfit.Name);
-            ImGui.SameLine();
-            ImGui.TextDisabled($"{outfit.SourceName}{(string.IsNullOrWhiteSpace(outfit.SourceAuthor) ? string.Empty : $" · {outfit.SourceAuthor}")}");
-            if (!string.IsNullOrWhiteSpace(outfit.SourceUrl))
-                ImGui.TextDisabled(outfit.SourceUrl);
-            if (outfit.SourceLastRefreshed is not null)
-                ImGui.TextDisabled($"Metadata last refreshed: {outfit.SourceLastRefreshed:yyyy-MM-dd HH:mm}");
-            if (ImGui.SmallButton("Load"))
-            {
-                working = outfit.Clone(false);
-                status = $"Loaded sourced outfit '{outfit.Name}'.";
-            }
-            ImGui.Separator();
-            ImGui.PopID();
-        }
-    }
-
     private void DrawItemPicker()
     {
         if (requestOpenItemPicker)
@@ -459,13 +444,14 @@ public sealed partial class MainWindow : Window, IDisposable
         ImGui.SetNextItemWidth(480 * ImGuiHelpers.GlobalScale);
         ImGui.InputTextWithHint("##itemSearch", "Search item name...", ref itemSearch, 100);
 
-        if (ImGui.Button("None / clear slot", new Vector2(-1, 0)))
+        if (ImGui.Button("None", new Vector2(-1, 0)))
         {
             var target = working.Slots[slot];
             target.ItemId = 0;
             target.Stain1 = 0;
             target.Stain2 = 0;
-            target.Apply = false;
+            target.Apply = true;
+            MarkWorkingChanged();
             ImGui.CloseCurrentPopup();
         }
 
@@ -481,6 +467,7 @@ public sealed partial class MainWindow : Window, IDisposable
                 var target = working.Slots[slot];
                 target.ItemId = item.Id;
                 target.Apply = true;
+                MarkWorkingChanged();
                 ImGui.CloseCurrentPopup();
             }
             ImGui.PopID();
@@ -534,41 +521,225 @@ public sealed partial class MainWindow : Window, IDisposable
         return stainId;
     }
 
-    private void CaptureFromGlamourer()
+    private void MarkWorkingChanged()
+    {
+        workingDirty = true;
+        if (workingNameIsSource)
+        {
+            working.Name = "Custom";
+            workingNameIsSource = false;
+        }
+    }
+
+    private void CaptureLiveLook(string name, int objectIndex)
+    {
+        var live = OutfitRecord.CreateBlank(name);
+        if (!plugin.Glamourer.CaptureCurrent(live, objectIndex, out var captureMessage))
+        {
+            status = captureMessage;
+            return;
+        }
+
+        live.Name = name;
+        live.Mods = CaptureActiveModRecipes();
+        working = live;
+        workingDirty = false;
+        workingNameIsSource = true;
+        status = $"{captureMessage} Loaded as {name}.";
+    }
+
+    private List<PenumbraModRecipe> CaptureActiveModRecipes()
+        => plugin.Penumbra.Mods
+            .Where(x => x.Enabled && x.AffectsEquipment)
+            .Select(ToRecipe)
+            .ToList();
+
+    private void RevertToGame()
     {
         if (!TryPlayerIndex(out var index))
             return;
 
-        plugin.Glamourer.CaptureCurrent(working, index, out status);
-        if (string.IsNullOrWhiteSpace(working.Name) || working.Name == "My Outfit")
-            working.Name = "Captured Outfit";
-    }
-
-    private void ApplyWorking() => ApplyOutfit(working);
-
-    private void ApplyOutfit(OutfitRecord outfit)
-    {
-        if (!TryPlayerIndex(out var index))
+        if (!plugin.Glamourer.RevertEquipmentToGame(index, out var revertMessage))
+        {
+            status = revertMessage;
             return;
+        }
 
-        plugin.Glamourer.ApplyOutfit(outfit, index, out status);
+        plugin.Penumbra.Refresh(index, plugin.GameData, out _);
+        CaptureLiveLook("Game Look", index);
+        status = $"{revertMessage} Dresser refreshed from the game look.";
     }
 
-    private void SaveWorkingToGlamourer() => SaveOutfitToGlamourer(working);
+    private void SaveWorkingToGlamourer()
+    {
+        if (string.IsNullOrWhiteSpace(working.Name))
+            working.Name = "Custom";
+
+        if (plugin.Glamourer.SaveDesign(working, out _, out status))
+            plugin.Glamourer.RefreshDesigns(out _);
+    }
 
     private void SaveOutfitToGlamourer(OutfitRecord outfit)
-        => plugin.Glamourer.SaveDesign(outfit, out _, out status);
+    {
+        if (plugin.Glamourer.SaveDesign(outfit, out _, out status))
+            plugin.Glamourer.RefreshDesigns(out _);
+    }
 
-    private void SaveWorkingToLibrary(bool favorite)
+    private void RequestSaveWorkingToWardrobe()
     {
         var clone = working.Clone();
-        clone.Favorite = favorite;
-        if (string.IsNullOrWhiteSpace(clone.Name))
-            clone.Name = favorite ? "Favorite Outfit" : "Saved Outfit";
+        clone.Favorite = false;
+        clone.Name = string.IsNullOrWhiteSpace(clone.Name) ? "Custom" : clone.Name.Trim();
 
+        // Public imports remain cached in the Public Wardrobe. Saving one from the Dresser
+        // creates a local copy while retaining its attribution URL/author metadata.
+        if (string.Equals(clone.SourceName, "Eorzea Collection", StringComparison.OrdinalIgnoreCase))
+            clone.SourceName = "Local copy · Eorzea Collection";
+
+        if (clone.Name.Equals("Custom", StringComparison.OrdinalIgnoreCase))
+            clone.Name = NextCustomName();
+
+        var existing = plugin.Configuration.Library.FirstOrDefault(x =>
+            !string.Equals(x.SourceName, "Eorzea Collection", StringComparison.OrdinalIgnoreCase)
+            && x.Name.Equals(clone.Name, StringComparison.OrdinalIgnoreCase));
+
+        if (existing is not null)
+        {
+            pendingOverwrite = clone;
+            pendingOverwriteId = existing.Id;
+            requestOverwritePopup = true;
+            return;
+        }
+
+        CommitWardrobeSave(clone);
+    }
+
+    private string NextCustomName()
+    {
+        var names = plugin.Configuration.Library
+            .Where(x => !string.Equals(x.SourceName, "Eorzea Collection", StringComparison.OrdinalIgnoreCase))
+            .Select(x => x.Name)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        if (!names.Contains("Custom"))
+            return "Custom";
+
+        for (var i = 2; ; i++)
+        {
+            var candidate = $"Custom{i}";
+            if (!names.Contains(candidate))
+                return candidate;
+        }
+    }
+
+    private void CommitWardrobeSave(OutfitRecord clone)
+    {
         plugin.Configuration.Library.Add(clone);
         plugin.Configuration.Save();
-        status = $"Saved '{clone.Name}' to {(favorite ? "Favorites" : "Wardrobe")}.";
+        working.Name = clone.Name;
+        workingNameIsSource = false;
+        status = $"Saved '{clone.Name}' to My Wardrobe.";
+    }
+
+    private void DrawOverwritePopup()
+    {
+        if (requestOverwritePopup)
+        {
+            ImGui.OpenPopup("Overwrite Wardrobe Look?##AllMyGlams");
+            requestOverwritePopup = false;
+        }
+
+        var open = true;
+        if (!ImGui.BeginPopupModal("Overwrite Wardrobe Look?##AllMyGlams", ref open, ImGuiWindowFlags.AlwaysAutoResize))
+            return;
+
+        ImGui.TextWrapped($"My Wardrobe already contains '{pendingOverwrite?.Name}'. Override that saved look?");
+        ImGui.Spacing();
+
+        if (ImGui.Button("Override", new Vector2(120 * ImGuiHelpers.GlobalScale, 0)) && pendingOverwrite is not null)
+        {
+            var index = plugin.Configuration.Library.FindIndex(x => x.Id == pendingOverwriteId);
+            if (index >= 0)
+            {
+                pendingOverwrite.Id = pendingOverwriteId;
+                plugin.Configuration.Library[index] = pendingOverwrite;
+                plugin.Configuration.Save();
+                working.Name = pendingOverwrite.Name;
+                workingNameIsSource = false;
+                status = $"Overrode '{pendingOverwrite.Name}' in My Wardrobe.";
+            }
+
+            pendingOverwrite = null;
+            pendingOverwriteId = Guid.Empty;
+            ImGui.CloseCurrentPopup();
+        }
+
+        ImGui.SameLine();
+        if (ImGui.Button("Cancel", new Vector2(120 * ImGuiHelpers.GlobalScale, 0)))
+        {
+            pendingOverwrite = null;
+            pendingOverwriteId = Guid.Empty;
+            ImGui.CloseCurrentPopup();
+        }
+
+        ImGui.EndPopup();
+    }
+
+    private void StartEorzeaImport(string input)
+    {
+        if (eorzeaImportTask is not null)
+            return;
+
+        status = "Fetching one Eorzea Collection glamour recipe...";
+        eorzeaImportTask = plugin.EorzeaCollection.ImportAsync(input, plugin.GameData);
+    }
+
+    private void ProcessEorzeaImport()
+    {
+        if (eorzeaImportTask is null || !eorzeaImportTask.IsCompleted)
+            return;
+
+        EorzeaImportResult result;
+        try
+        {
+            result = eorzeaImportTask.GetAwaiter().GetResult();
+        }
+        catch (Exception ex)
+        {
+            status = $"Eorzea Collection import failed: {ex.Message}";
+            eorzeaImportTask = null;
+            return;
+        }
+
+        eorzeaImportTask = null;
+        if (!result.Success || result.Outfit is null)
+        {
+            status = result.Message;
+            return;
+        }
+
+        var imported = result.Outfit;
+        var existingIndex = plugin.Configuration.Library.FindIndex(x =>
+            string.Equals(x.SourceName, "Eorzea Collection", StringComparison.OrdinalIgnoreCase)
+            && x.SourceExternalId == imported.SourceExternalId);
+
+        if (existingIndex >= 0)
+        {
+            imported.Id = plugin.Configuration.Library[existingIndex].Id;
+            plugin.Configuration.Library[existingIndex] = imported;
+        }
+        else
+        {
+            plugin.Configuration.Library.Add(imported);
+        }
+
+        plugin.Configuration.Save();
+        status = result.Warnings.Count == 0
+            ? result.Message
+            : $"{result.Message} {result.Warnings.Count} field(s) could not be resolved; see the log for details.";
+
+        foreach (var warning in result.Warnings)
+            Plugin.Log.Warning("[Eorzea Collection] {Warning}", warning);
     }
 
     private void RefreshPenumbra()
@@ -584,7 +755,7 @@ public sealed partial class MainWindow : Window, IDisposable
         if (plugin.TryGetLocalPlayerIndex(out index))
             return true;
 
-        status = "Local player is not available. Log in before using actor/mod actions.";
+        status = "Local player is not available. Log in before using character/mod actions.";
         return false;
     }
 }

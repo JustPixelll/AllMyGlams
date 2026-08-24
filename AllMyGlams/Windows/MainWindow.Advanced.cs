@@ -18,7 +18,7 @@ public sealed partial class MainWindow
         ImGui.SetNextItemWidth(420 * ImGuiHelpers.GlobalScale);
         ImGui.InputTextWithHint("##glamourerSearch", "Search name or folder...", ref glamourerSearch, 100);
         ImGui.Spacing();
-        ImGui.TextDisabled("Load strips the design down to equipment/dyes for editing here; Apply Equipment tells Glamourer to apply only the equipment portion of the original design.");
+        ImGui.TextDisabled("Wear / Edit expands partial Glamourer designs against what you currently wear so the Dresser stays a complete look.");
         ImGui.Spacing();
 
         var designs = plugin.Glamourer.Designs.Where(x =>
@@ -42,39 +42,39 @@ public sealed partial class MainWindow
                 ImGui.TextDisabled("[Quick Design]");
             }
 
-            if (ImGui.SmallButton("Load into Dresser"))
-                plugin.Glamourer.LoadDesignIntoOutfit(design, working, out status);
-
-            ImGui.SameLine();
-            if (ImGui.SmallButton("Apply Equipment"))
+            if (ImGui.SmallButton("Wear / Edit"))
             {
-                if (TryPlayerIndex(out var index))
-                    plugin.Glamourer.ApplyExistingDesign(design, index, out status);
+                if (TryPlayerIndex(out var index)
+                    && plugin.Glamourer.LoadDesignIntoOutfit(design, working, index, out status))
+                {
+                    workingNameIsSource = true;
+                    workingDirty = false;
+                    ApplyWholeLook(working);
+                }
             }
 
             ImGui.SameLine();
-            if (ImGui.SmallButton("Save Local Copy"))
-                SaveGlamourerDesignLocal(design, false);
-
-            ImGui.SameLine();
-            if (ImGui.SmallButton("Favorite Local Copy"))
-                SaveGlamourerDesignLocal(design, true);
+            if (ImGui.SmallButton("Save to Wardrobe"))
+                SaveGlamourerDesignLocal(design);
 
             ImGui.Separator();
             ImGui.PopID();
         }
     }
 
-    private void SaveGlamourerDesignLocal(GlamourerDesignEntry design, bool favorite)
+    private void SaveGlamourerDesignLocal(GlamourerDesignEntry design)
     {
-        var local = OutfitRecord.CreateBlank(design.DisplayName);
-        if (!plugin.Glamourer.LoadDesignIntoOutfit(design, local, out status))
+        if (!TryPlayerIndex(out var index))
             return;
 
-        local.Favorite = favorite;
-        plugin.Configuration.Library.Add(local);
-        plugin.Configuration.Save();
-        status = $"Saved equipment from '{design.DisplayName}' to {(favorite ? "Favorites" : "Wardrobe")}.";
+        var local = OutfitRecord.CreateBlank(design.DisplayName);
+        if (!plugin.Glamourer.LoadDesignIntoOutfit(design, local, index, out status))
+            return;
+
+        working = local;
+        workingNameIsSource = true;
+        workingDirty = false;
+        RequestSaveWorkingToWardrobe();
     }
 
     private void ApplyWholeLook(OutfitRecord outfit)
@@ -117,7 +117,8 @@ public sealed partial class MainWindow
     {
         working.Mods.RemoveAll(x => string.Equals(x.Directory, mod.Directory, StringComparison.Ordinal));
         working.Mods.Add(ToRecipe(mod));
-        status = $"Attached {mod.Name} to '{working.Name}'.";
+        MarkWorkingChanged();
+        status = $"Attached {mod.Name} to the Dresser.";
     }
 
     private void DrawModOptionsEditor(PenumbraModEntry mod)

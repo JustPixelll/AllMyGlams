@@ -1,3 +1,4 @@
+using Dalamud.Game;
 using Dalamud.Plugin.Services;
 using Lumina.Excel.Sheets;
 
@@ -7,6 +8,8 @@ public sealed class GameDataService
 {
     private readonly Dictionary<ulong, ItemRecord> itemsById = [];
     private readonly Dictionary<string, List<ItemRecord>> itemsByName = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, List<ulong>> englishItemIdsByName = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, byte> englishStainIdsByName = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<ItemRecord> items = [];
     private readonly List<StainRecord> stains = [];
     private readonly HashSet<string> wearableNames = new(StringComparer.OrdinalIgnoreCase);
@@ -16,7 +19,8 @@ public sealed class GameDataService
 
     public GameDataService(IDataManager data)
     {
-        foreach (var item in data.GetExcelSheet<Item>())
+        var localItems = data.GetExcelSheet<Item>();
+        foreach (var item in localItems)
         {
             if (item.RowId == 0)
                 continue;
@@ -41,6 +45,22 @@ public sealed class GameDataService
                     slotCompatibility[slot].Add(item.RowId);
         }
 
+        // Eorzea Collection uses English canonical FFXIV names regardless of the user's
+        // client language. Keep a second lookup by RowId so imports also work on DE/FR/JP clients.
+        foreach (var item in data.GetExcelSheet<Item>(ClientLanguage.English))
+        {
+            if (item.RowId == 0)
+                continue;
+
+            var englishName = item.Name.ToString().Trim();
+            if (englishName.Length == 0)
+                continue;
+
+            if (!englishItemIdsByName.TryGetValue(englishName, out var ids))
+                englishItemIdsByName[englishName] = ids = [];
+            ids.Add(item.RowId);
+        }
+
         items.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.CurrentCultureIgnoreCase));
 
         stains.Add(new StainRecord(0, "None"));
@@ -56,17 +76,56 @@ public sealed class GameDataService
             stains.Add(new StainRecord((byte)stain.RowId, name));
         }
 
+        foreach (var stain in data.GetExcelSheet<Stain>(ClientLanguage.English))
+        {
+            if (stain.RowId == 0 || stain.RowId > byte.MaxValue)
+                continue;
+
+            var name = stain.Name.ToString().Trim();
+            if (name.Length > 0)
+                englishStainIdsByName[name] = (byte)stain.RowId;
+        }
+
         stains.Sort((a, b) => a.Id == 0 ? -1 : b.Id == 0 ? 1 : string.Compare(a.Name, b.Name, StringComparison.CurrentCultureIgnoreCase));
     }
 
     public ItemRecord? GetItem(ulong itemId)
-        => itemsById.GetValueOrDefault(itemId);
+        => itemId == 0 ? null : itemsById.GetValueOrDefault(itemId);
 
     public IReadOnlyList<ItemRecord> GetItemsByName(string itemName)
         => itemsByName.TryGetValue(itemName.Trim(), out var found) ? found : [];
 
+    public ItemRecord? ResolveEnglishItem(string itemName, GlamSlot slot)
+    {
+        if (!englishItemIdsByName.TryGetValue(itemName.Trim(), out var ids))
+            return null;
+
+        foreach (var id in ids)
+            if (ItemFitsSlot(id, slot) && itemsById.TryGetValue(id, out var record))
+                return record;
+
+        return null;
+    }
+
+    public bool ItemFitsSlot(ulong itemId, GlamSlot slot)
+        => slotCompatibility.TryGetValue(slot, out var ids) && ids.Contains(itemId);
+
     public StainRecord GetStain(byte id)
         => stains.FirstOrDefault(x => x.Id == id) ?? new StainRecord(id, id == 0 ? "None" : $"Dye #{id}");
+
+    public bool TryResolveEnglishStain(string stainName, out byte id)
+    {
+        stainName = stainName.Trim();
+        if (stainName.Length == 0
+            || stainName.Equals("Undyed", StringComparison.OrdinalIgnoreCase)
+            || stainName.Equals("None", StringComparison.OrdinalIgnoreCase))
+        {
+            id = 0;
+            return true;
+        }
+
+        return englishStainIdsByName.TryGetValue(stainName, out id);
+    }
 
     public bool IsWearableItemName(string changedItemName)
         => wearableNames.Contains(changedItemName.Trim());
@@ -81,7 +140,7 @@ public sealed class GameDataService
             if (!string.IsNullOrEmpty(query) && !item.Name.Contains(query, StringComparison.CurrentCultureIgnoreCase))
                 continue;
 
-            if (!slotCompatibility.TryGetValue(slot, out var ids) || !ids.Contains(item.Id))
+            if (!ItemFitsSlot(item.Id, slot))
                 continue;
 
             result.Add(item);

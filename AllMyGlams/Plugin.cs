@@ -17,6 +17,8 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static ICommandManager CommandManager { get; private set; } = null!;
     [PluginService] internal static IDataManager DataManager { get; private set; } = null!;
     [PluginService] internal static IObjectTable ObjectTable { get; private set; } = null!;
+    [PluginService] internal static IClientState ClientState { get; private set; } = null!;
+    [PluginService] internal static IFramework Framework { get; private set; } = null!;
     [PluginService] internal static ITextureProvider TextureProvider { get; private set; } = null!;
     [PluginService] internal static IPluginLog Log { get; private set; } = null!;
 
@@ -24,6 +26,7 @@ public sealed class Plugin : IDalamudPlugin
     public GameDataService GameData { get; }
     public GlamourerIpc Glamourer { get; }
     public PenumbraIpc Penumbra { get; }
+    public EorzeaCollectionService EorzeaCollection { get; }
 
     public readonly WindowSystem WindowSystem = new("AllMyGlams");
     private readonly MainWindow mainWindow;
@@ -36,6 +39,7 @@ public sealed class Plugin : IDalamudPlugin
         GameData = new GameDataService(DataManager);
         Glamourer = new GlamourerIpc(PluginInterface);
         Penumbra = new PenumbraIpc(PluginInterface);
+        EorzeaCollection = new EorzeaCollectionService();
 
         mainWindow = new MainWindow(this);
         WindowSystem.AddWindow(mainWindow);
@@ -46,10 +50,18 @@ public sealed class Plugin : IDalamudPlugin
         PluginInterface.UiBuilder.Draw += WindowSystem.Draw;
         PluginInterface.UiBuilder.OpenMainUi += OpenMainUi;
         PluginInterface.UiBuilder.OpenConfigUi += OpenMainUi;
+        ClientState.Login += OnLogin;
+        Framework.Update += OnFrameworkUpdate;
+
+        // Glamourer can be refreshed even before the character exists; Penumbra and the
+        // live dresser are also populated immediately when the plugin is loaded in-game.
+        mainWindow.RefreshFromIntegrations(true);
     }
 
     public void Dispose()
     {
+        Framework.Update -= OnFrameworkUpdate;
+        ClientState.Login -= OnLogin;
         PluginInterface.UiBuilder.Draw -= WindowSystem.Draw;
         PluginInterface.UiBuilder.OpenMainUi -= OpenMainUi;
         PluginInterface.UiBuilder.OpenConfigUi -= OpenMainUi;
@@ -57,6 +69,7 @@ public sealed class Plugin : IDalamudPlugin
         CommandManager.RemoveHandler(ShortCommandName);
         WindowSystem.RemoveAllWindows();
         mainWindow.Dispose();
+        EorzeaCollection.Dispose();
     }
 
     public bool TryGetLocalPlayerIndex(out int objectIndex)
@@ -72,6 +85,19 @@ public sealed class Plugin : IDalamudPlugin
         return objectIndex >= 0;
     }
 
-    private void OnCommand(string command, string args) => mainWindow.Toggle();
-    private void OpenMainUi() => mainWindow.IsOpen = true;
+    private void OnFrameworkUpdate(IFramework framework) => mainWindow.TickLiveDresser();
+    private void OnLogin() => mainWindow.RefreshFromIntegrations(true);
+
+    private void OnCommand(string command, string args)
+    {
+        mainWindow.Toggle();
+        if (mainWindow.IsOpen)
+            mainWindow.RefreshFromIntegrations(false);
+    }
+
+    private void OpenMainUi()
+    {
+        mainWindow.IsOpen = true;
+        mainWindow.RefreshFromIntegrations(false);
+    }
 }

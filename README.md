@@ -1,94 +1,106 @@
 # AllMyGlams
 
-AllMyGlams is an experimental Dalamud glamour workstation for FFXIV: one place to build equipment-only Glamourer looks, reuse existing designs, keep a local wardrobe/favourites library, inspect equipment-related Penumbra mods, and bundle selected mod state into saved looks.
+AllMyGlams is an experimental Dalamud glamour workstation for FFXIV: the Dresser is the editor, your character is the viewer, and Glamourer/Penumbra/public glamour recipes are brought together in one outfit workflow.
 
-## v0.1 feature set
+## v0.2 feature set
 
-### Dresser
+### Live Dresser
 
-- All Glamourer equipment slots in one equipment-focused editor.
-- Slot-aware vanilla item search backed by FFXIV game data.
-- In-game item icon display.
+- The Dresser represents a **complete equipment look**, not a partial overlay.
+- Every Glamourer equipment slot is explicit, including `None`.
+- The current character equipment/dyes are captured into the Dresser on load/login.
+- While the window is open, clean (non-edited) Dresser state follows external gear/Glamourer changes automatically.
+- Unsaved Dresser edits pause automatic synchronization so they are not overwritten.
+- Slot-aware vanilla item search backed by FFXIV game data with in-game item icons.
 - Dye 1 / Dye 2 selection.
-- Per-slot Apply flag so unused slots leave the current appearance untouched.
-- Detect the local player's current Glamourer equipment/dyes.
-- Apply the working outfit through `Glamourer.SetItem.V3`.
-- Save an equipment-only design through `Glamourer.AddDesign`.
-- Save to the local Wardrobe or directly to Favorites.
+- Top-level actions:
+  - **Apply Dresser to Character**
+  - **Revert to Game**
+  - **Save to Wardrobe**
+  - **Save to Glamourer**
+- `Revert to Game` uses Glamourer's supported equipment-only revert IPC; it does not reconstruct game gear manually.
+- Glamourer's slot-specific and weapon-type synthetic Nothing IDs are normalized back to `None` in the editor.
+
+### Naming and wardrobe
+
+- A freshly captured current state is called `Game Look`.
+- Editing gear/dyes/mod recipes changes a source-derived name to `Custom` unless the user already supplied their own name.
+- Saving `Custom` uses the next available Custom name without prompting on that automatic sequence.
+- Saving any other duplicate name prompts before overriding the existing wardrobe entry.
+- Favorites were removed; saved local looks live in one **My Wardrobe** collection.
+- Wardrobe looks can be worn/edited immediately and saved onward to Glamourer.
 
 ### Glamourer workspace
 
-- Browse/search existing Glamourer designs.
-- Preserve Glamourer folder/path information in the browser.
-- Load an existing design's equipment/dyes into the AllMyGlams Dresser.
-- Apply only the equipment portion of an existing design.
-- Copy existing Glamourer designs into the local Wardrobe/Favorites as equipment-only looks.
-
-### Wardrobe / Favorites
-
-- Persistent local saved outfits.
-- Separate Favorites view.
-- Duplicate/delete/load/apply/save-to-Glamourer actions.
-- A saved outfit can also carry attached Penumbra mod recipes.
-- `Apply Look` applies the gear and then the attached Penumbra mod state.
+- Glamourer designs refresh automatically when the plugin loads/opens, with a manual refresh button remaining available.
+- Browse/search existing Glamourer designs and preserve their folder/path display.
+- **Wear / Edit** turns even a partial Glamourer design into the complete resulting look by overlaying it on the character's current equipment before placing it in the Dresser.
+- Save expanded Glamourer designs to the local Wardrobe.
+- Saving from AllMyGlams creates equipment/dye-only Glamourer designs and leaves character customization untouched.
 
 ### Penumbra workspace
 
-- Browse every installed mod using supported Penumbra IPC.
-- Read the local player's effective Penumbra collection.
-- Show Penumbra Changed Items for every mod.
-- Flag changed-item names that map to wearable FFXIV items and display their game icons.
-- Optional equipment-related-only filter.
-- Enable/disable mods from AllMyGlams.
-- Read and change mod priority.
-- Lazily load Penumbra option groups only when requested.
-- Edit single-choice and multi-choice option groups.
-- Attach an individual mod, or all currently enabled equipment-related mods, to the working outfit.
-- Attached recipes store enabled state, priority, and current option selections.
-- Applying an outfit's mod recipe intentionally leaves unrelated mods untouched.
+- Penumbra state refreshes automatically when the player is available, with a manual refresh button remaining available.
+- Browse installed mods using supported Penumbra IPC only.
+- Read the local player's effective collection.
+- Show Changed Items for mods and identify names that map to wearable FFXIV items.
+- Enable/disable mods, change priorities, and lazily load/edit option groups.
+- Attach one mod or the currently enabled equipment-related mods to the Dresser.
+- Saved mod recipes carry enabled state, priority, and option selections.
+- Applying a look configures only the mods explicitly attached to it; unrelated mods are intentionally left alone.
 
-### Sourced wardrobe foundation
+### Public Wardrobe — Eorzea Collection
 
-The local data model already keeps:
+The Wardrobe contains a separate collapsible **Public Wardrobe — Eorzea Collection** area.
 
-- source/provider name,
-- external glamour ID,
-- source URL,
-- author,
-- rating snapshot,
-- last metadata refresh time.
+- Import an individual `https://ffxiv.eorzeacollection.com/glamour/...` URL or numeric glamour ID on demand.
+- Resolve Eorzea Collection's English item/dye names against FFXIV's English game-data sheets, then use the local client's item IDs/icons.
+- Parse supported gear slots plus both dye channels when present.
+- Keep creator attribution, original source URL, external glamour ID, and fetch time with the cached look.
+- Store the resolved recipe locally so wearing it later requires **zero** Eorzea Collection requests.
+- Explicit **Refresh Source** is available for cached public entries.
+- No EC screenshots are downloaded or hotlinked.
+- No catalogue/background crawler is shipped.
+- If Eorzea Collection returns `403`, AllMyGlams reports it and does **not** attempt to bypass the site's access controls.
 
-This is intended for an openly disclosed, cached Eorzea Collection provider (and potentially other opt-in sources) without coupling the core dresser to a scraper or hotlinking screenshots.
+The broad Eorzea Collection browse endpoint has shown automated-access restrictions in testing, so v0.2 deliberately starts with individual glamour imports rather than pretending to provide a reliable full-site browser.
 
 ## Design principles
 
-1. **No config-file hacks.** Glamourer and Penumbra are controlled via their published IPC surfaces.
-2. **Equipment-first designs.** AllMyGlams does not intentionally modify race, face, hair, body customization, materials, or other character customization when creating an outfit.
-3. **Local-first wardrobe.** Once an external look is imported, its resolved item/dye recipe should be stored locally and reusable without repeatedly requesting the source.
-4. **Source attribution stays attached.** Imported looks retain source/author/link metadata.
-5. **Explicit network refresh.** External wardrobe providers should fetch only on user action and cache resolved designs.
-6. **Do not rewrite unrelated mods.** Applying an outfit's attached Penumbra recipe configures the listed mods and leaves the rest of the collection alone.
+1. **No config-file hacks.** Glamourer and Penumbra are controlled through their IPC surfaces.
+2. **Character as viewer.** The Dresser edits a complete outfit and the player character displays the result.
+3. **Equipment-only Glamourer output.** AllMyGlams does not intentionally modify race, face, hair, body customization, materials, or other avatar customization when saving an outfit.
+4. **Local-first public wardrobe.** Imported public recipes are resolved and cached locally.
+5. **Source attribution stays attached.** Imported looks retain provider/author/link metadata.
+6. **Explicit network access.** External sources are fetched on user action, not through background crawling.
+7. **Do not rewrite unrelated mods.** Outfit mod recipes configure their listed mods only.
 
 ## Dependencies
 
 - Dalamud API / `Dalamud.NET.Sdk` 15
-- Glamourer for apply/capture/design features
-- Penumbra for mod-management features
+- Glamourer for equipment state/design integration
+- Penumbra for mod-management integration
 
-The plugin UI can still open if Glamourer or Penumbra is missing; actions that require the missing plugin report the IPC failure instead of editing plugin files directly.
+The UI can still open if Glamourer or Penumbra is unavailable; related actions report the IPC failure rather than editing either plugin's files.
 
 ## Commands
 
 - `/allmyglams`
 - `/amg`
 
-## Known v0.1 limits
+## Custom Dalamud repository
 
-- Equipment-mod detection currently uses Penumbra's Changed Items names and exact matching against wearable FFXIV item names. The full Mods list remains available so false negatives do not hide mods unless the equipment-only filter is enabled.
-- Attached mod recipes do not disable unrelated mods. A future isolated outfit-collection mode may provide stricter reproducibility without touching the user's normal collection.
-- The Eorzea Collection/source-provider UI is only the local cache/attribution foundation for now; no automatic crawler is shipped in this first build.
-- This is an experimental plugin and the storage/UI schema may change while the workflow is tested.
+Add this URL under Dalamud **Settings → Experimental → Custom Plugin Repositories**:
+
+`https://raw.githubusercontent.com/JustPixelll/AllMyGlams/main/pluginmaster.json`
+
+## Current experimental limits
+
+- Equipment-mod detection uses Penumbra Changed Items names and matching against wearable FFXIV item names. The full Mods list remains available so the heuristic is not the only way to access a mod.
+- Eorzea Collection v0.2 integration imports individual glamour pages only. Full browse/search is intentionally not implemented while automated access to the broad catalogue is uncertain/restricted.
+- Public-source page markup can change. Import failures are surfaced instead of silently generating incomplete outfits.
+- This remains an experimental plugin; storage/UI details may evolve as the workflow is tested in-game.
 
 ## Build status
 
-The current v0.1 tree is compiled and packaged in GitHub Actions against the Dalamud D17 development files.
+The v0.2 tree is compiled and packaged in GitHub Actions against the Dalamud D17 development files before merge/release.
