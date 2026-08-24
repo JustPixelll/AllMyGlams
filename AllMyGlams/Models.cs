@@ -110,6 +110,7 @@ public sealed class OutfitRecord
     public void EnsureSlots()
     {
         Slots ??= CreateBlankSlots();
+        Mods ??= [];
         foreach (var slot in GlamSlots.Ordered)
             Slots.TryAdd(slot, new OutfitSlot());
     }
@@ -142,6 +143,15 @@ public sealed record ItemRecord(
 
 public sealed record StainRecord(byte Id, string Name);
 
+public sealed class PenumbraModOptionGroup
+{
+    public string Name { get; init; } = string.Empty;
+    public List<string> Options { get; init; } = [];
+    public int GroupType { get; init; }
+
+    public bool IsSingle => GroupType == 0;
+}
+
 public sealed class PenumbraModEntry
 {
     public string Directory { get; init; } = string.Empty;
@@ -153,4 +163,6 @@ public sealed class PenumbraModEntry
     public bool AffectsEquipment { get; init; }
     public List<string> ChangedItems { get; init; } = [];
     public Dictionary<string, List<string>> Settings { get; set; } = new(StringComparer.Ordinal);
+    public List<PenumbraModOptionGroup> AvailableSettings { get; set; } = [];
+    public bool AvailableSettingsLoaded { get; set; }
 }
