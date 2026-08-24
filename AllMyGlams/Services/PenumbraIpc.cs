@@ -7,6 +7,7 @@ public sealed class PenumbraIpc
 {
     private readonly ICallGateSubscriber<Dictionary<string, string>> getModList;
     private readonly ICallGateSubscriber<string, string, Dictionary<string, object?>> getChangedItems;
+    private readonly ICallGateSubscriber<string, string, IReadOnlyDictionary<string, (string[] Options, int GroupType)>?> getAvailableModSettings;
     private readonly ICallGateSubscriber<int, (bool ObjectValid, bool IndividualSet, (Guid Id, string Name) EffectiveCollection)> getCollectionForObject;
     private readonly ICallGateSubscriber<Guid, bool, bool, int, (int, Dictionary<string, (bool Enabled, int Priority, Dictionary<string, List<string>> Settings, bool Inherited, bool Temporary)>?)> getAllModSettings;
     private readonly ICallGateSubscriber<Guid, string, string, bool, int> trySetMod;
@@ -21,6 +22,7 @@ public sealed class PenumbraIpc
     {
         getModList = pi.GetIpcSubscriber<Dictionary<string, string>>("Penumbra.GetModList");
         getChangedItems = pi.GetIpcSubscriber<string, string, Dictionary<string, object?>>("Penumbra.GetChangedItems.V5");
+        getAvailableModSettings = pi.GetIpcSubscriber<string, string, IReadOnlyDictionary<string, (string[], int)>?>("Penumbra.GetAvailableModSettings.V5");
         getCollectionForObject = pi.GetIpcSubscriber<int, (bool ObjectValid, bool IndividualSet, (Guid Id, string Name) EffectiveCollection)>("Penumbra.GetCollectionForObject.V5");
         getAllModSettings = pi.GetIpcSubscriber<Guid, bool, bool, int, (int, Dictionary<string, (bool, int, Dictionary<string, List<string>>, bool, bool)>?)>("Penumbra.GetAllModSettings");
         trySetMod = pi.GetIpcSubscriber<Guid, string, string, bool, int>("Penumbra.TrySetMod.V5");
@@ -94,6 +96,30 @@ public sealed class PenumbraIpc
             EffectiveCollectionId = Guid.Empty;
             EffectiveCollectionName = "Unavailable";
             message = $"Could not talk to Penumbra. Is it installed and enabled? {ex.Message}";
+            return false;
+        }
+    }
+
+    public bool LoadAvailableSettings(PenumbraModEntry mod, out string message)
+    {
+        try
+        {
+            var available = getAvailableModSettings.InvokeFunc(mod.Directory, mod.Name);
+            mod.AvailableSettings = available is null
+                ? []
+                : available.Select(x => new PenumbraModOptionGroup
+                {
+                    Name = x.Key,
+                    Options = x.Value.Options.ToList(),
+                    GroupType = x.Value.GroupType,
+                }).ToList();
+            mod.AvailableSettingsLoaded = true;
+            message = $"Loaded {mod.AvailableSettings.Count} option group(s) for {mod.Name}.";
+            return true;
+        }
+        catch (Exception ex)
+        {
+            message = $"Could not load options for {mod.Name}: {ex.Message}";
             return false;
         }
     }
