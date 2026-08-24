@@ -16,7 +16,7 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static IDalamudPluginInterface PluginInterface { get; private set; } = null!;
     [PluginService] internal static ICommandManager CommandManager { get; private set; } = null!;
     [PluginService] internal static IDataManager DataManager { get; private set; } = null!;
-    [PluginService] internal static IClientState ClientState { get; private set; } = null!;
+    [PluginService] internal static IObjectTable ObjectTable { get; private set; } = null!;
     [PluginService] internal static ITextureProvider TextureProvider { get; private set; } = null!;
     [PluginService] internal static IPluginLog Log { get; private set; } = null!;
 
@@ -40,11 +40,7 @@ public sealed class Plugin : IDalamudPlugin
         mainWindow = new MainWindow(this);
         WindowSystem.AddWindow(mainWindow);
 
-        var commandInfo = new CommandInfo(OnCommand)
-        {
-            HelpMessage = "Open All My Glams.",
-        };
-        CommandManager.AddHandler(CommandName, commandInfo);
+        CommandManager.AddHandler(CommandName, new CommandInfo(OnCommand) { HelpMessage = "Open All My Glams." });
         CommandManager.AddHandler(ShortCommandName, new CommandInfo(OnCommand) { HelpMessage = "Open All My Glams." });
 
         PluginInterface.UiBuilder.Draw += WindowSystem.Draw;
@@ -65,7 +61,7 @@ public sealed class Plugin : IDalamudPlugin
 
     public bool TryGetLocalPlayerIndex(out int objectIndex)
     {
-        var player = ClientState.LocalPlayer;
+        var player = ObjectTable.LocalPlayer;
         if (player is null)
         {
             objectIndex = -1;
