@@ -32,15 +32,8 @@ public sealed class PenumbraIpc
     {
         try
         {
-            var collection = getCollectionForObject.InvokeFunc(objectIndex);
-            if (!collection.ObjectValid)
-            {
-                message = "Penumbra could not resolve a collection for the local player.";
+            if (!ResolveCollection(objectIndex, out message))
                 return false;
-            }
-
-            EffectiveCollectionId = collection.EffectiveCollection.Id;
-            EffectiveCollectionName = collection.EffectiveCollection.Name;
 
             var modList = getModList.InvokeFunc();
             var (settingsEc, settings) = getAllModSettings.InvokeFunc(EffectiveCollectionId, false, false, 0);
@@ -101,6 +94,60 @@ public sealed class PenumbraIpc
             EffectiveCollectionId = Guid.Empty;
             EffectiveCollectionName = "Unavailable";
             message = $"Could not talk to Penumbra. Is it installed and enabled? {ex.Message}";
+            return false;
+        }
+    }
+
+    public bool ApplyRecipes(IEnumerable<PenumbraModRecipe> recipes, int objectIndex, out string message)
+    {
+        var list = recipes.ToList();
+        if (list.Count == 0)
+        {
+            message = "This outfit has no attached Penumbra mods.";
+            return true;
+        }
+
+        try
+        {
+            if (!ResolveCollection(objectIndex, out message))
+                return false;
+
+            var changed = 0;
+            foreach (var recipe in list)
+            {
+                var enabledEc = trySetMod.InvokeFunc(EffectiveCollectionId, recipe.Directory, recipe.Name, recipe.Enabled);
+                if (enabledEc is not (0 or 1))
+                {
+                    message = $"Penumbra rejected '{recipe.Name}' enabled state (code {enabledEc}) after {changed} mod(s).";
+                    return false;
+                }
+
+                var priorityEc = trySetModPriority.InvokeFunc(EffectiveCollectionId, recipe.Directory, recipe.Name, recipe.Priority);
+                if (priorityEc is not (0 or 1))
+                {
+                    message = $"Penumbra rejected '{recipe.Name}' priority (code {priorityEc}) after {changed} mod(s).";
+                    return false;
+                }
+
+                foreach (var (group, options) in recipe.Settings)
+                {
+                    var optionsEc = trySetModSettings.InvokeFunc(EffectiveCollectionId, recipe.Directory, recipe.Name, group, options);
+                    if (optionsEc is not (0 or 1))
+                    {
+                        message = $"Penumbra rejected '{recipe.Name}' option group '{group}' (code {optionsEc}) after {changed} mod(s).";
+                        return false;
+                    }
+                }
+
+                changed++;
+            }
+
+            message = $"Applied {changed} attached Penumbra mod recipe(s) to '{EffectiveCollectionName}'. Other mods were left untouched.";
+            return true;
+        }
+        catch (Exception ex)
+        {
+            message = $"Could not apply the outfit's Penumbra mods: {ex.Message}";
             return false;
         }
     }
@@ -190,5 +237,22 @@ public sealed class PenumbraIpc
             message = $"Could not change Penumbra options: {ex.Message}";
             return false;
         }
+    }
+
+    private bool ResolveCollection(int objectIndex, out string message)
+    {
+        var collection = getCollectionForObject.InvokeFunc(objectIndex);
+        if (!collection.ObjectValid)
+        {
+            EffectiveCollectionId = Guid.Empty;
+            EffectiveCollectionName = "Unavailable";
+            message = "Penumbra could not resolve a collection for the local player.";
+            return false;
+        }
+
+        EffectiveCollectionId = collection.EffectiveCollection.Id;
+        EffectiveCollectionName = collection.EffectiveCollection.Name;
+        message = $"Using Penumbra collection '{EffectiveCollectionName}'.";
+        return true;
     }
 }
