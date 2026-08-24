@@ -1,0 +1,23 @@
+[
+  {
+    "Author": "JustPixelll",
+    "Name": "All My Glams",
+    "Punchline": "Your glamour, Glamourer and Penumbra outfit workspace.",
+    "Description": "Build equipment-only glamour designs, capture and apply looks through Glamourer, keep a local wardrobe and favourites, browse existing Glamourer designs, and manage equipment-affecting Penumbra mods from one UI.",
+    "Changelog": "Initial experimental release of All My Glams. Includes the equipment dresser, local wardrobe and favourites, Glamourer design integration, Penumbra mod discovery and controls, mod priorities/options, combined gear + mod look recipes, and the sourced-wardrobe foundation.",
+    "InternalName": "AllMyGlams",
+    "AssemblyVersion": "0.1.0.0",
+    "RepoUrl": "https://github.com/JustPixelll/AllMyGlams",
+    "ApplicableVersion": "any",
+    "CategoryTags": [
+      "utility"
+    ],
+    "DalamudApiLevel": 15,
+    "ImageUrls": [],
+    "DownloadLinkInstall": "https://github.com/JustPixelll/AllMyGlams/releases/download/v0.1.0.0/AllMyGlams.zip",
+    "DownloadLinkUpdate": "https://github.com/JustPixelll/AllMyGlams/releases/download/v0.1.0.0/AllMyGlams.zip",
+    "IsHide": false,
+    "IsTestingExclusive": false,
+    "LastUpdate": "1787609043"
+  }
+]
