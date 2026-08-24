@@ -9,6 +9,7 @@ public sealed class GameDataService
     private readonly List<ItemRecord> items = [];
     private readonly List<StainRecord> stains = [];
     private readonly HashSet<string> wearableNames = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<GlamSlot, HashSet<ulong>> slotCompatibility = GlamSlots.Ordered.ToDictionary(x => x, _ => new HashSet<ulong>());
 
     public IReadOnlyList<StainRecord> Stains => stains;
 
@@ -23,14 +24,17 @@ public sealed class GameDataService
             if (string.IsNullOrWhiteSpace(name))
                 continue;
 
-            var category = item.EquipSlotCategory.ValueNullable;
-            if (category is null)
+            if (item.EquipSlotCategory.ValueNullable is not { } category)
                 continue;
 
             var record = new ItemRecord(item.RowId, name, item.Icon, item.EquipSlotCategory.RowId);
             items.Add(record);
             itemsById[item.RowId] = record;
             wearableNames.Add(name);
+
+            foreach (var slot in GlamSlots.Ordered)
+                if (Fits(category, slot))
+                    slotCompatibility[slot].Add(item.RowId);
         }
 
         items.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.CurrentCultureIgnoreCase));
@@ -70,9 +74,6 @@ public sealed class GameDataService
             if (!string.IsNullOrEmpty(query) && !item.Name.Contains(query, StringComparison.CurrentCultureIgnoreCase))
                 continue;
 
-            // Fetching the row again would be wasteful; EquipSlotCategoryId is retained so callers
-            // can inspect it later, while this fast slot predicate is populated from the sheet below.
-            // We use the pre-built compatibility cache instead.
             if (!slotCompatibility.TryGetValue(slot, out var ids) || !ids.Contains(item.Id))
                 continue;
 
@@ -82,21 +83,6 @@ public sealed class GameDataService
         }
 
         return result;
-    }
-
-    private readonly Dictionary<GlamSlot, HashSet<ulong>> slotCompatibility = GlamSlots.Ordered.ToDictionary(x => x, _ => new HashSet<ulong>());
-
-    public void BuildSlotCompatibility(IDataManager data)
-    {
-        foreach (var item in data.GetExcelSheet<Item>())
-        {
-            if (item.RowId == 0 || item.EquipSlotCategory.ValueNullable is not { } category)
-                continue;
-
-            foreach (var slot in GlamSlots.Ordered)
-                if (Fits(category, slot))
-                    slotCompatibility[slot].Add(item.RowId);
-        }
     }
 
     private static bool Fits(EquipSlotCategory category, GlamSlot slot) => slot switch
