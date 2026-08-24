@@ -86,8 +86,10 @@ public sealed class MainWindow : Window, IDisposable
     {
         working.EnsureSlots();
 
+        var outfitName = working.Name;
         ImGui.SetNextItemWidth(360 * ImGuiHelpers.GlobalScale);
-        ImGui.InputTextWithHint("##outfitName", "Outfit name", ref working.Name, 100);
+        if (ImGui.InputTextWithHint("##outfitName", "Outfit name", ref outfitName, 100))
+            working.Name = outfitName;
 
         if (ImGui.Button("Detect from Glamourer"))
             CaptureFromGlamourer();
@@ -116,7 +118,7 @@ public sealed class MainWindow : Window, IDisposable
         }
 
         ImGui.Spacing();
-        ImGui.TextDisabled("Apply controls whether that slot is included. A cleared slot with Apply enabled tells Glamourer to use its slot-specific Nothing item; disabling Apply leaves the current appearance untouched.");
+        ImGui.TextDisabled("Apply controls whether that slot is included. Disabling Apply leaves the current appearance untouched.");
         ImGui.Spacing();
 
         if (ImGui.BeginTable("##dresserTable", 7,
@@ -164,10 +166,10 @@ public sealed class MainWindow : Window, IDisposable
                 }
 
                 ImGui.TableNextColumn();
-                DrawStainCombo("##stain1", ref value.Stain1);
+                value.Stain1 = DrawStainCombo("##stain1", value.Stain1);
 
                 ImGui.TableNextColumn();
-                DrawStainCombo("##stain2", ref value.Stain2);
+                value.Stain2 = DrawStainCombo("##stain2", value.Stain2);
 
                 ImGui.TableNextColumn();
                 if (ImGui.SmallButton("Clear"))
@@ -493,12 +495,12 @@ public sealed class MainWindow : Window, IDisposable
         }
     }
 
-    private void DrawStainCombo(string id, ref byte stainId)
+    private byte DrawStainCombo(string id, byte stainId)
     {
         var current = plugin.GameData.GetStain(stainId);
         ImGui.SetNextItemWidth(-1);
         if (!ImGui.BeginCombo(id, current.Name))
-            return;
+            return stainId;
 
         foreach (var stain in plugin.GameData.Stains)
         {
@@ -507,6 +509,7 @@ public sealed class MainWindow : Window, IDisposable
         }
 
         ImGui.EndCombo();
+        return stainId;
     }
 
     private void CaptureFromGlamourer()
