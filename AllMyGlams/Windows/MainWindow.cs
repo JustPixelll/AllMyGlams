@@ -6,7 +6,7 @@ using Dalamud.Interface.Windowing;
 
 namespace AllMyGlams.Windows;
 
-public sealed class MainWindow : Window, IDisposable
+public sealed partial class MainWindow : Window, IDisposable
 {
     private readonly Plugin plugin;
     private OutfitRecord working = OutfitRecord.CreateBlank("My Outfit");
@@ -45,6 +45,12 @@ public sealed class MainWindow : Window, IDisposable
                 ImGui.EndTabItem();
             }
 
+            if (ImGui.BeginTabItem("Glamourer"))
+            {
+                DrawGlamourerTab();
+                ImGui.EndTabItem();
+            }
+
             if (ImGui.BeginTabItem("Wardrobe"))
             {
                 DrawLibraryTab(false);
@@ -77,7 +83,7 @@ public sealed class MainWindow : Window, IDisposable
 
     private void DrawHeader()
     {
-        ImGui.TextWrapped("Build vanilla gear looks, capture your current Glamourer equipment, save them to your local wardrobe or Glamourer, and manage outfit-related Penumbra mods from one place.");
+        ImGui.TextWrapped("Build vanilla gear looks, reuse existing Glamourer designs, save a local wardrobe, and manage outfit-related Penumbra mods from one place.");
         ImGui.Spacing();
         ImGui.TextDisabled(status);
     }
@@ -95,8 +101,15 @@ public sealed class MainWindow : Window, IDisposable
             CaptureFromGlamourer();
 
         ImGui.SameLine();
-        if (ImGui.Button("Apply"))
+        if (ImGui.Button("Apply Gear"))
             ApplyWorking();
+
+        if (working.Mods.Count > 0)
+        {
+            ImGui.SameLine();
+            if (ImGui.Button($"Apply Look (+{working.Mods.Count} Mods)"))
+                ApplyWholeLook(working);
+        }
 
         ImGui.SameLine();
         if (ImGui.Button("Save to Glamourer"))
@@ -118,7 +131,7 @@ public sealed class MainWindow : Window, IDisposable
         }
 
         ImGui.Spacing();
-        ImGui.TextDisabled("Apply controls whether that slot is included. Disabling Apply leaves the current appearance untouched.");
+        ImGui.TextDisabled($"{working.Mods.Count} attached Penumbra mod recipe(s). Apply controls whether each gear slot is included; disabled slots leave the current appearance untouched.");
         ImGui.Spacing();
 
         if (ImGui.BeginTable("##dresserTable", 7,
@@ -240,6 +253,13 @@ public sealed class MainWindow : Window, IDisposable
             if (ImGui.SmallButton("Apply Gear"))
                 ApplyOutfit(outfit);
 
+            if (outfit.Mods.Count > 0)
+            {
+                ImGui.SameLine();
+                if (ImGui.SmallButton("Apply Look"))
+                    ApplyWholeLook(outfit);
+            }
+
             ImGui.SameLine();
             if (ImGui.SmallButton("Save to Glamourer"))
                 SaveOutfitToGlamourer(outfit);
@@ -303,14 +323,7 @@ public sealed class MainWindow : Window, IDisposable
         {
             working.Mods = plugin.Penumbra.Mods
                 .Where(x => x.Enabled && x.AffectsEquipment)
-                .Select(x => new PenumbraModRecipe
-                {
-                    Directory = x.Directory,
-                    Name = x.Name,
-                    Enabled = true,
-                    Priority = x.Priority,
-                    Settings = x.Settings.ToDictionary(y => y.Key, y => y.Value.ToList(), StringComparer.Ordinal),
-                })
+                .Select(ToRecipe)
                 .ToList();
             status = $"Attached {working.Mods.Count} enabled equipment-related Penumbra mod(s) to the working outfit.";
         }
@@ -359,7 +372,16 @@ public sealed class MainWindow : Window, IDisposable
                 ImGui.TextDisabled($"Directory: {mod.Directory}");
                 ImGui.TextDisabled($"Changed items: {mod.ChangedItems.Count}");
 
-                if (mod.Settings.Count > 0 && ImGui.TreeNode("Current option settings"))
+                if (ImGui.SmallButton("Attach this mod to working outfit"))
+                    AttachModToWorking(mod);
+
+                ImGui.SameLine();
+                if (!mod.AvailableSettingsLoaded && ImGui.SmallButton("Load / edit options"))
+                    plugin.Penumbra.LoadAvailableSettings(mod, out status);
+
+                if (mod.AvailableSettingsLoaded)
+                    DrawModOptionsEditor(mod);
+                else if (mod.Settings.Count > 0 && ImGui.TreeNode("Current option settings"))
                 {
                     foreach (var (group, options) in mod.Settings)
                         ImGui.BulletText($"{group}: {(options.Count == 0 ? "(none)" : string.Join(", ", options))}");
@@ -372,7 +394,7 @@ public sealed class MainWindow : Window, IDisposable
                         ImGui.TextDisabled("Penumbra reports no named changed items for this mod.");
                     else
                         foreach (var changed in mod.ChangedItems)
-                            ImGui.BulletText(changed);
+                            DrawChangedItem(changed);
                     ImGui.TreePop();
                 }
 
