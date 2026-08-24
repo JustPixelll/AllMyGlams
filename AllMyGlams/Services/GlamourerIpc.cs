@@ -331,11 +331,23 @@ public sealed class GlamourerIpc
         if (itemId == 0)
             return 0;
 
-        // Glamourer serializes Nothing using a synthetic slot-specific ItemId.
-        // LFinger maps to the actual RFinger inventory slot in Penumbra.GameData.
+        // Armor/accessory Nothing is normally serialized with a slot-specific synthetic
+        // uint ID. Weapon/off-hand Nothing can instead use the FullEquipType-specific
+        // synthetic range (uint.MaxValue - 384 - type). Custom model IDs live above 2^48,
+        // so recognizing this small uint-reserved range does not collapse custom items.
         var physicalSlot = slot == GlamSlot.LFinger ? GlamSlot.RFinger : slot;
-        var nothingId = (ulong)(uint.MaxValue - 128u - (uint)physicalSlot);
-        return itemId == nothingId ? 0 : itemId;
+        var slotNothingId = (ulong)(uint.MaxValue - 128u - (uint)physicalSlot);
+        if (itemId == slotNothingId)
+            return 0;
+
+        if (itemId <= uint.MaxValue)
+        {
+            var offset = (ulong)uint.MaxValue - itemId;
+            if (offset is >= 384 and <= 512)
+                return 0;
+        }
+
+        return itemId;
     }
 
     private static void ResetSourceMetadata(OutfitRecord target)
