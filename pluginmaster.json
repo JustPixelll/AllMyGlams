@@ -3,7 +3,7 @@
     "Author": "JustPixelll",
     "Name": "All My Glams",
     "Punchline": "Your glamour, Glamourer and Penumbra outfit workspace.",
-    "Description": "Build equipment-only glamour designs, capture and apply looks through Glamourer, keep a local wardrobe and favourites, browse existing Glamourer designs, and manage equipment-affecting Penumbra mods from one UI.",
+    "Description": "Use your character as the viewer for a live complete-look dresser, reuse Glamourer designs, keep a local wardrobe, manage equipment-affecting Penumbra mods, and cache openly attributed public glamour recipes from supported sources.",
     "Changelog": "v0.2: Live complete-look Dresser; explicit None slots; Revert to Game; unified Wardrobe; automatic Glamourer/Penumbra refresh; external equipment sync; safer naming/override rules; and first cached Eorzea Collection individual-glamour import.",
     "InternalName": "AllMyGlams",
     "AssemblyVersion": "0.2.0.0",
