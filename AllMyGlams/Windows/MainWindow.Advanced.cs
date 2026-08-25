@@ -213,20 +213,26 @@ public sealed partial class MainWindow
         return false;
     }
 
+    private ResolvedModPiece? ResolveChangedPiece(string changed)
+    {
+        foreach (var item in plugin.GameData.GetItemsByName(changed))
+        {
+            var slots = GlamSlots.Ordered.Where(slot => plugin.GameData.ItemFitsSlot(item.Id, slot)).ToArray();
+            if (slots.Length > 0)
+                return new ResolvedModPiece(changed, item, slots);
+        }
+
+        return null;
+    }
+
     private List<ResolvedModPiece> ResolveModPieces(PenumbraModEntry mod)
     {
         var result = new List<ResolvedModPiece>();
         foreach (var changed in mod.ChangedItems)
         {
-            foreach (var item in plugin.GameData.GetItemsByName(changed))
-            {
-                var slots = GlamSlots.Ordered.Where(slot => plugin.GameData.ItemFitsSlot(item.Id, slot)).ToArray();
-                if (slots.Length == 0)
-                    continue;
-
-                result.Add(new ResolvedModPiece(changed, item, slots));
-                break;
-            }
+            var piece = ResolveChangedPiece(changed);
+            if (piece is not null)
+                result.Add(piece);
         }
 
         return result;
@@ -377,7 +383,7 @@ public sealed partial class MainWindow
 
     private void DrawChangedItem(PenumbraModEntry mod, string changed)
     {
-        var piece = ResolveModPieces(mod).FirstOrDefault(x => string.Equals(x.ChangedName, changed, StringComparison.OrdinalIgnoreCase));
+        var piece = ResolveChangedPiece(changed);
         if (piece is null)
         {
             ImGui.BulletText(changed);
