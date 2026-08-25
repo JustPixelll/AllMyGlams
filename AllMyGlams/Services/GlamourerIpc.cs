@@ -35,7 +35,10 @@ public sealed class GlamourerIpc
     {
         try
         {
-            var stains = new byte[] { value.Stain1, value.Stain2 };
+            // Glamourer.SetItem.V3 exposes IReadOnlyList<byte>. Passing a byte[] here makes
+            // Dalamud's IPC converter try to convert Byte[] to the interface type and fail
+            // before Glamourer is invoked. List<byte> directly implements the interface.
+            IReadOnlyList<byte> stains = new List<byte> { value.Stain1, value.Stain2 };
             // ItemId 0 is intentional: Glamourer resolves it to the correct slot-specific
             // Nothing item, so None is a first-class live Dresser state.
             var ec = setItem.InvokeFunc(objectIndex, (byte)slot, value.ItemId, stains, 0, ApplyOnce);
@@ -65,7 +68,7 @@ public sealed class GlamourerIpc
             foreach (var slot in GlamSlots.Ordered)
             {
                 var value = outfit.Slots[slot];
-                var stains = new byte[] { value.Stain1, value.Stain2 };
+                IReadOnlyList<byte> stains = new List<byte> { value.Stain1, value.Stain2 };
                 // ItemId 0 is intentionally meaningful: Glamourer resolves it to the
                 // slot-specific Nothing item, so an empty dresser slot really becomes None.
                 var ec = setItem.InvokeFunc(objectIndex, (byte)slot, value.ItemId, stains, 0, ApplyOnce);
