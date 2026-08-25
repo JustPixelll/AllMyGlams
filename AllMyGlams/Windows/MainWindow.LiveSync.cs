@@ -6,7 +6,7 @@ public sealed partial class MainWindow
 
     public void TickLiveDresser()
     {
-        if (!IsOpen || workingDirty || DateTime.UtcNow < nextLiveEquipmentSyncUtc)
+        if (!IsOpen || DateTime.UtcNow < nextLiveEquipmentSyncUtc)
             return;
 
         nextLiveEquipmentSyncUtc = DateTime.UtcNow.AddSeconds(1);
@@ -31,13 +31,19 @@ public sealed partial class MainWindow
         if (!changed)
             return;
 
-        // The character changed outside the Dresser (gearset swap, another Glamourer
-        // action, etc.). Follow the live actor unless the user has unsaved editor changes.
-        live.Name = "Game Look";
-        live.Mods = CaptureActiveModRecipes();
-        working = live;
-        workingNameIsSource = true;
-        workingDirty = false;
-        status = "Detected an external equipment change; Dresser synchronized to the current character look.";
+        // The Dresser is a view of the actor, not a detached staging buffer. If anything
+        // changes outside AMG, copy the live slots into the existing working record so its
+        // name/source metadata can survive while the equipment display stays truthful.
+        foreach (var slot in GlamSlots.Ordered)
+            CopySlot(live.Slots[slot], working.Slots[slot]);
+
+        workingDirty = true;
+        if (workingNameIsSource && !working.Name.Equals("Game Look", StringComparison.OrdinalIgnoreCase))
+        {
+            working.Name = "Custom";
+            workingNameIsSource = false;
+        }
+
+        status = "Dresser synchronized to the character's current equipment appearance.";
     }
 }
