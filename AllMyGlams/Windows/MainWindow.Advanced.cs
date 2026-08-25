@@ -138,20 +138,38 @@ public sealed partial class MainWindow
         ImGui.PopID();
     }
 
+    private List<PenumbraModRecipe> RelevantRecipesForPiece(OutfitRecord outfit, GlamSlot slot)
+    {
+        var item = plugin.GameData.GetItem(outfit.Slots[slot].ItemId);
+        if (item is null || outfit.Mods.Count == 0)
+            return [];
+
+        var relevantDirectories = plugin.Penumbra.Mods
+            .Where(mod => mod.ChangedItems.Contains(item.Name, StringComparer.OrdinalIgnoreCase))
+            .Select(mod => mod.Directory)
+            .ToHashSet(StringComparer.Ordinal);
+
+        return outfit.Mods
+            .Where(recipe => recipe.Enabled && relevantDirectories.Contains(recipe.Directory))
+            .Select(recipe => recipe.Clone())
+            .ToList();
+    }
+
     private void ApplyWardrobePiece(OutfitRecord outfit, GlamSlot slot)
     {
         if (!TryPlayerIndex(out var index))
             return;
 
+        var relevantRecipes = RelevantRecipesForPiece(outfit, slot);
         string? modMessage = null;
-        if (outfit.Mods.Count > 0 && !plugin.Penumbra.ApplyRecipes(outfit.Mods, index, out modMessage))
-            modMessage = $"Attached mod recipe failed: {modMessage}";
+        if (relevantRecipes.Count > 0 && !plugin.Penumbra.ApplyRecipes(relevantRecipes, index, out modMessage))
+            modMessage = $"Relevant mod recipe failed: {modMessage}";
 
         working.EnsureSlots();
         var source = outfit.Slots[slot];
         var target = working.Slots[slot];
         CopySlot(source, target);
-        MergeWorkingMods(outfit.Mods);
+        MergeWorkingMods(relevantRecipes);
         MarkWorkingChanged();
 
         if (!plugin.Glamourer.ApplySlot(slot, target, index, out var gearMessage))
@@ -162,8 +180,8 @@ public sealed partial class MainWindow
 
         nextLiveEquipmentSyncUtc = DateTime.UtcNow.AddMilliseconds(350);
         status = modMessage is null
-            ? $"Applied {slot.DisplayName()} from '{outfit.Name}'."
-            : $"Applied {slot.DisplayName()} from '{outfit.Name}'. {modMessage}";
+            ? $"Applied only {slot.DisplayName()} from '{outfit.Name}'."
+            : $"Applied only {slot.DisplayName()} from '{outfit.Name}'. {modMessage}";
     }
 
     private PenumbraModRecipe ToRecipe(PenumbraModEntry mod)
