@@ -99,7 +99,7 @@ public sealed partial class MainWindow : Window, IDisposable
 
     private void DrawHeader()
     {
-        ImGui.TextWrapped("The Dresser is the editor; your character is the viewer. Every equipment slot is explicit, including None. Glamourer and Penumbra lists refresh automatically when All My Glams loads, with manual refresh buttons still available.");
+        ImGui.TextWrapped("The Dresser mirrors your character's current equipment appearance. Item, dye and None edits apply immediately; Apply Dresser is only a fallback full-look reapply.");
         ImGui.Spacing();
         ImGui.TextDisabled(status);
     }
@@ -117,10 +117,7 @@ public sealed partial class MainWindow : Window, IDisposable
         }
 
         if (ImGui.Button("Apply Dresser to Character"))
-        {
             ApplyWholeLook(working);
-            workingDirty = false;
-        }
 
         ImGui.SameLine();
         if (ImGui.Button("Revert to Game"))
@@ -135,7 +132,7 @@ public sealed partial class MainWindow : Window, IDisposable
             SaveWorkingToGlamourer();
 
         ImGui.Spacing();
-        ImGui.TextDisabled($"Complete look · {working.Mods.Count} attached Penumbra mod recipe(s){(workingDirty ? " · edited" : string.Empty)}");
+        ImGui.TextDisabled($"Live complete look · {working.Mods.Count} attached Penumbra mod recipe(s){(workingDirty ? " · unsaved changes" : string.Empty)}");
         ImGui.Spacing();
 
         if (ImGui.BeginTable("##dresserTable", 6,
@@ -177,13 +174,19 @@ public sealed partial class MainWindow : Window, IDisposable
                 var oldStain1 = value.Stain1;
                 value.Stain1 = DrawStainCombo("##stain1", value.Stain1);
                 if (oldStain1 != value.Stain1)
+                {
                     MarkWorkingChanged();
+                    ApplyWorkingSlot(slot);
+                }
 
                 ImGui.TableNextColumn();
                 var oldStain2 = value.Stain2;
                 value.Stain2 = DrawStainCombo("##stain2", value.Stain2);
                 if (oldStain2 != value.Stain2)
+                {
                     MarkWorkingChanged();
+                    ApplyWorkingSlot(slot);
+                }
 
                 ImGui.TableNextColumn();
                 if (ImGui.SmallButton("None"))
@@ -193,6 +196,7 @@ public sealed partial class MainWindow : Window, IDisposable
                     value.Stain2 = 0;
                     value.Apply = true;
                     MarkWorkingChanged();
+                    ApplyWorkingSlot(slot);
                 }
 
                 ImGui.PopID();
@@ -261,43 +265,51 @@ public sealed partial class MainWindow : Window, IDisposable
             outfit.EnsureSlots();
             ImGui.PushID(outfit.Id.ToString());
 
-            ImGui.TextUnformatted(outfit.Name);
+            var open = ImGui.TreeNode($"{outfit.Name}##wardrobe-tree");
             if (!string.IsNullOrWhiteSpace(outfit.SourceAuthor))
             {
                 ImGui.SameLine();
                 ImGui.TextDisabled($"by {outfit.SourceAuthor}");
             }
 
-            ImGui.SameLine();
-            ImGui.TextDisabled($"{outfit.Mods.Count} mod(s)");
-
-            if (ImGui.SmallButton("Wear / Edit"))
+            if (open)
             {
-                working = outfit.Clone();
-                workingNameIsSource = true;
-                workingDirty = false;
-                ApplyWholeLook(working);
-            }
+                if (!string.IsNullOrWhiteSpace(outfit.SourceName) && !string.Equals(outfit.SourceName, "Local", StringComparison.OrdinalIgnoreCase))
+                    ImGui.TextDisabled($"Source: {outfit.SourceName}{(string.IsNullOrWhiteSpace(outfit.SourceUrl) ? string.Empty : $" · {outfit.SourceUrl}")}");
+                if (outfit.SourceLastRefreshed is not null)
+                    ImGui.TextDisabled($"Fetched: {outfit.SourceLastRefreshed:yyyy-MM-dd HH:mm} UTC");
+                if (outfit.Mods.Count > 0)
+                    ImGui.TextDisabled($"{outfit.Mods.Count} attached Penumbra mod recipe(s)");
 
-            ImGui.SameLine();
-            if (ImGui.SmallButton("Save to Glamourer"))
-                SaveOutfitToGlamourer(outfit);
+                if (ImGui.SmallButton("Apply Outfit"))
+                {
+                    working = outfit.Clone();
+                    workingNameIsSource = true;
+                    workingDirty = false;
+                    ApplyWholeLook(working);
+                }
 
-            if (publicSource && !string.IsNullOrWhiteSpace(outfit.SourceUrl))
-            {
                 ImGui.SameLine();
-                if (ImGui.SmallButton("Refresh Source"))
-                    StartEorzeaImport(outfit.SourceUrl!);
+                if (ImGui.SmallButton("Save to Glamourer"))
+                    SaveOutfitToGlamourer(outfit);
+
+                if (publicSource && !string.IsNullOrWhiteSpace(outfit.SourceUrl))
+                {
+                    ImGui.SameLine();
+                    if (ImGui.SmallButton("Refresh Source"))
+                        StartEorzeaImport(outfit.SourceUrl!);
+                }
+
+                ImGui.SameLine();
+                if (ImGui.SmallButton(publicSource ? "Remove Cache" : "Delete"))
+                    delete = outfit.Id;
+
+                ImGui.Spacing();
+                foreach (var slot in GlamSlots.Ordered)
+                    DrawWardrobePiece(outfit, slot);
+
+                ImGui.TreePop();
             }
-
-            ImGui.SameLine();
-            if (ImGui.SmallButton(publicSource ? "Remove Cache" : "Delete"))
-                delete = outfit.Id;
-
-            if (!string.IsNullOrWhiteSpace(outfit.SourceName) && !string.Equals(outfit.SourceName, "Local", StringComparison.OrdinalIgnoreCase))
-                ImGui.TextDisabled($"Source: {outfit.SourceName}{(string.IsNullOrWhiteSpace(outfit.SourceUrl) ? string.Empty : $" · {outfit.SourceUrl}")}");
-            if (outfit.SourceLastRefreshed is not null)
-                ImGui.TextDisabled($"Fetched: {outfit.SourceLastRefreshed:yyyy-MM-dd HH:mm} UTC");
 
             ImGui.Separator();
             ImGui.PopID();
@@ -335,16 +347,8 @@ public sealed partial class MainWindow : Window, IDisposable
             plugin.Configuration.Save();
         }
 
-        ImGui.SameLine();
-        if (ImGui.Button("Use current enabled gear mods in Dresser"))
-        {
-            working.Mods = CaptureActiveModRecipes();
-            MarkWorkingChanged();
-            status = $"Dresser now contains {working.Mods.Count} enabled equipment-related Penumbra mod recipe(s).";
-        }
-
         ImGui.Spacing();
-        ImGui.TextDisabled("Equipment detection uses Penumbra Changed Items and matches named changed items against wearable FFXIV items. Expand a mod to inspect what Penumbra reports.");
+        ImGui.TextDisabled("Collapsed rows stay intentionally minimal. Expand a mod for priority, options, diagnostics and per-piece apply controls.");
         ImGui.Spacing();
 
         var visible = plugin.Penumbra.Mods.Where(x =>
@@ -362,33 +366,30 @@ public sealed partial class MainWindow : Window, IDisposable
                 plugin.Penumbra.SetEnabled(mod, enabled, out status);
 
             ImGui.SameLine();
-            if (mod.AffectsEquipment)
-                ImGui.TextUnformatted("[GEAR]");
-            else
-                ImGui.TextDisabled("[other]");
-
-            ImGui.SameLine();
             var treeOpen = ImGui.TreeNode($"{mod.Name}##tree");
-
-            ImGui.SameLine();
-            ImGui.TextDisabled(mod.Inherited ? "inherited" : mod.Temporary ? "temporary" : "direct");
-
-            ImGui.SameLine();
-            ImGui.SetNextItemWidth(90 * ImGuiHelpers.GlobalScale);
-            var priority = mod.Priority;
-            if (ImGui.InputInt("##priority", ref priority, 1, 10))
-                mod.Priority = priority;
-            ImGui.SameLine();
-            if (ImGui.SmallButton("Set priority"))
-                plugin.Penumbra.SetPriority(mod, mod.Priority, out status);
 
             if (treeOpen)
             {
+                ImGui.TextDisabled($"{(mod.AffectsEquipment ? "Equipment-related" : "Other changes")} · {(mod.Inherited ? "inherited" : mod.Temporary ? "temporary" : "direct")} · {mod.ChangedItems.Count} changed item/object(s)");
                 ImGui.TextDisabled($"Directory: {mod.Directory}");
-                ImGui.TextDisabled($"Changed items: {mod.ChangedItems.Count}");
 
+                if (ImGui.SmallButton("Apply Mod Look"))
+                    ApplyModLook(mod);
+
+                ImGui.SameLine();
                 if (ImGui.SmallButton("Attach this mod to Dresser"))
                     AttachModToWorking(mod);
+
+                ImGui.Spacing();
+                ImGui.TextUnformatted("Priority");
+                ImGui.SameLine();
+                ImGui.SetNextItemWidth(90 * ImGuiHelpers.GlobalScale);
+                var priority = mod.Priority;
+                if (ImGui.InputInt("##priority", ref priority, 1, 10))
+                    mod.Priority = priority;
+                ImGui.SameLine();
+                if (ImGui.SmallButton("Set"))
+                    plugin.Penumbra.SetPriority(mod, mod.Priority, out status);
 
                 ImGui.SameLine();
                 if (!mod.AvailableSettingsLoaded && ImGui.SmallButton("Load / edit options"))
@@ -403,15 +404,14 @@ public sealed partial class MainWindow : Window, IDisposable
                     ImGui.TreePop();
                 }
 
-                if (ImGui.TreeNode("Changed items / objects"))
-                {
-                    if (mod.ChangedItems.Count == 0)
-                        ImGui.TextDisabled("Penumbra reports no named changed items for this mod.");
-                    else
-                        foreach (var changed in mod.ChangedItems)
-                            DrawChangedItem(changed);
-                    ImGui.TreePop();
-                }
+                ImGui.Spacing();
+                ImGui.TextUnformatted("Changed items / objects");
+                ImGui.Separator();
+                if (mod.ChangedItems.Count == 0)
+                    ImGui.TextDisabled("Penumbra reports no named changed items for this mod.");
+                else
+                    foreach (var changed in mod.ChangedItems)
+                        DrawChangedItem(mod, changed);
 
                 ImGui.TreePop();
             }
@@ -452,6 +452,7 @@ public sealed partial class MainWindow : Window, IDisposable
             target.Stain2 = 0;
             target.Apply = true;
             MarkWorkingChanged();
+            ApplyWorkingSlot(slot);
             ImGui.CloseCurrentPopup();
         }
 
@@ -468,6 +469,7 @@ public sealed partial class MainWindow : Window, IDisposable
                 target.ItemId = item.Id;
                 target.Apply = true;
                 MarkWorkingChanged();
+                ApplyWorkingSlot(slot);
                 ImGui.CloseCurrentPopup();
             }
             ImGui.PopID();
@@ -638,6 +640,7 @@ public sealed partial class MainWindow : Window, IDisposable
         plugin.Configuration.Save();
         working.Name = clone.Name;
         workingNameIsSource = false;
+        workingDirty = false;
         status = $"Saved '{clone.Name}' to My Wardrobe.";
     }
 
@@ -666,6 +669,7 @@ public sealed partial class MainWindow : Window, IDisposable
                 plugin.Configuration.Save();
                 working.Name = pendingOverwrite.Name;
                 workingNameIsSource = false;
+                workingDirty = false;
                 status = $"Overrode '{pendingOverwrite.Name}' in My Wardrobe.";
             }
 

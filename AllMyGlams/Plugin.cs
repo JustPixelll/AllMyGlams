@@ -119,12 +119,12 @@ public sealed class Plugin : IDalamudPlugin
     {
         mainWindow.Toggle();
         if (mainWindow.IsOpen)
-            mainWindow.RefreshFromIntegrations(false);
+            mainWindow.RefreshLiveDresserOnly();
     }
 
     private void OpenMainUi()
     {
         mainWindow.IsOpen = true;
-        mainWindow.RefreshFromIntegrations(false);
+        mainWindow.RefreshLiveDresserOnly();
     }
 }
