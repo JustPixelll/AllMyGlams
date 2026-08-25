@@ -31,6 +31,30 @@ public sealed class GlamourerIpc
         applyDesign = pi.GetIpcSubscriber<Guid, int, uint, ulong, int>("Glamourer.ApplyDesign");
     }
 
+    public bool ApplySlot(GlamSlot slot, OutfitSlot value, int objectIndex, out string message)
+    {
+        try
+        {
+            var stains = new byte[] { value.Stain1, value.Stain2 };
+            // ItemId 0 is intentional: Glamourer resolves it to the correct slot-specific
+            // Nothing item, so None is a first-class live Dresser state.
+            var ec = setItem.InvokeFunc(objectIndex, (byte)slot, value.ItemId, stains, 0, ApplyOnce);
+            if (ec != 0)
+            {
+                message = $"Glamourer rejected {slot.DisplayName()} (code {ec}).";
+                return false;
+            }
+
+            message = $"Applied {slot.DisplayName()} to the character.";
+            return true;
+        }
+        catch (Exception ex)
+        {
+            message = $"Could not apply {slot.DisplayName()} through Glamourer. Is Glamourer installed and enabled? {ex.Message}";
+            return false;
+        }
+    }
+
     public bool ApplyOutfit(OutfitRecord outfit, int objectIndex, out string message)
     {
         outfit.EnsureSlots();
