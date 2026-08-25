@@ -5,6 +5,8 @@ namespace AllMyGlams.Windows;
 
 public sealed partial class MainWindow
 {
+    private sealed record ResolvedModPiece(string ChangedName, ItemRecord Item, IReadOnlyList<GlamSlot> CompatibleSlots);
+
     private string glamourerSearch = string.Empty;
 
     private void DrawGlamourerTab()
@@ -82,25 +84,86 @@ public sealed partial class MainWindow
         if (!TryPlayerIndex(out var index))
             return;
 
+        string? modMessage = null;
+        if (outfit.Mods.Count > 0 && !plugin.Penumbra.ApplyRecipes(outfit.Mods, index, out modMessage))
+            modMessage = $"Mod recipe failed: {modMessage}";
+
         if (!plugin.Glamourer.ApplyOutfit(outfit, index, out var gearMessage))
         {
-            status = gearMessage;
+            status = modMessage is null ? gearMessage : $"{gearMessage} {modMessage}";
             return;
         }
 
-        if (outfit.Mods.Count == 0)
+        nextLiveEquipmentSyncUtc = DateTime.UtcNow.AddMilliseconds(350);
+        status = modMessage is null ? gearMessage : $"{gearMessage} {modMessage}";
+    }
+
+    private void ApplyWorkingSlot(GlamSlot slot)
+    {
+        if (!TryPlayerIndex(out var index))
+            return;
+
+        working.EnsureSlots();
+        if (plugin.Glamourer.ApplySlot(slot, working.Slots[slot], index, out var message))
+            nextLiveEquipmentSyncUtc = DateTime.UtcNow.AddMilliseconds(350);
+        status = message;
+    }
+
+    private void DrawWardrobePiece(OutfitRecord outfit, GlamSlot slot)
+    {
+        var value = outfit.Slots[slot];
+        var item = plugin.GameData.GetItem(value.ItemId);
+        var itemName = item?.Name ?? (value.ItemId == 0 ? "None" : $"Unknown item #{value.ItemId}");
+
+        ImGui.PushID($"wardrobe-piece-{slot}");
+        DrawItemIcon(value.ItemId, 44);
+        ImGui.SameLine();
+        ImGui.BeginGroup();
+        ImGui.TextUnformatted($"{slot.DisplayName()}: {itemName}");
+        if (value.Stain1 != 0 || value.Stain2 != 0)
         {
-            status = gearMessage;
-            return;
+            var dye1 = plugin.GameData.GetStain(value.Stain1).Name;
+            var dye2 = plugin.GameData.GetStain(value.Stain2).Name;
+            ImGui.TextDisabled($"Dye 1: {dye1} · Dye 2: {dye2}");
         }
-
-        if (!plugin.Penumbra.ApplyRecipes(outfit.Mods, index, out var modMessage))
+        else
         {
-            status = $"Gear applied. Mod recipe failed: {modMessage}";
+            ImGui.TextDisabled("Undyed");
+        }
+
+        if (ImGui.SmallButton("Apply This Piece"))
+            ApplyWardrobePiece(outfit, slot);
+        ImGui.EndGroup();
+        ImGui.Spacing();
+        ImGui.PopID();
+    }
+
+    private void ApplyWardrobePiece(OutfitRecord outfit, GlamSlot slot)
+    {
+        if (!TryPlayerIndex(out var index))
+            return;
+
+        string? modMessage = null;
+        if (outfit.Mods.Count > 0 && !plugin.Penumbra.ApplyRecipes(outfit.Mods, index, out modMessage))
+            modMessage = $"Attached mod recipe failed: {modMessage}";
+
+        working.EnsureSlots();
+        var source = outfit.Slots[slot];
+        var target = working.Slots[slot];
+        CopySlot(source, target);
+        MergeWorkingMods(outfit.Mods);
+        MarkWorkingChanged();
+
+        if (!plugin.Glamourer.ApplySlot(slot, target, index, out var gearMessage))
+        {
+            status = modMessage is null ? gearMessage : $"{gearMessage} {modMessage}";
             return;
         }
 
-        status = $"{gearMessage} {modMessage}";
+        nextLiveEquipmentSyncUtc = DateTime.UtcNow.AddMilliseconds(350);
+        status = modMessage is null
+            ? $"Applied {slot.DisplayName()} from '{outfit.Name}'."
+            : $"Applied {slot.DisplayName()} from '{outfit.Name}'. {modMessage}";
     }
 
     private PenumbraModRecipe ToRecipe(PenumbraModEntry mod)
@@ -119,6 +182,131 @@ public sealed partial class MainWindow
         working.Mods.Add(ToRecipe(mod));
         MarkWorkingChanged();
         status = $"Attached {mod.Name} to the Dresser.";
+    }
+
+    private void MergeWorkingMods(IEnumerable<PenumbraModRecipe> recipes)
+    {
+        foreach (var recipe in recipes)
+        {
+            working.Mods.RemoveAll(x => string.Equals(x.Directory, recipe.Directory, StringComparison.Ordinal));
+            working.Mods.Add(recipe.Clone());
+        }
+    }
+
+    private static void CopySlot(OutfitSlot source, OutfitSlot target)
+    {
+        target.ItemId = source.ItemId;
+        target.Stain1 = source.Stain1;
+        target.Stain2 = source.Stain2;
+        target.Apply = true;
+    }
+
+    private bool EnsureModEnabled(PenumbraModEntry mod)
+    {
+        if (mod.Enabled)
+            return true;
+
+        if (plugin.Penumbra.SetEnabled(mod, true, out var message))
+            return true;
+
+        status = message;
+        return false;
+    }
+
+    private List<ResolvedModPiece> ResolveModPieces(PenumbraModEntry mod)
+    {
+        var result = new List<ResolvedModPiece>();
+        foreach (var changed in mod.ChangedItems)
+        {
+            foreach (var item in plugin.GameData.GetItemsByName(changed))
+            {
+                var slots = GlamSlots.Ordered.Where(slot => plugin.GameData.ItemFitsSlot(item.Id, slot)).ToArray();
+                if (slots.Length == 0)
+                    continue;
+
+                result.Add(new ResolvedModPiece(changed, item, slots));
+                break;
+            }
+        }
+
+        return result;
+    }
+
+    private void ApplyModLook(PenumbraModEntry mod)
+    {
+        if (!EnsureModEnabled(mod))
+            return;
+
+        var pieces = ResolveModPieces(mod);
+        if (pieces.Count == 0)
+        {
+            status = $"{mod.Name} has no changed item names that AllMyGlams can map to wearable FFXIV equipment.";
+            return;
+        }
+
+        var outfit = OutfitRecord.CreateBlank($"Mod · {mod.Name}");
+        outfit.EnsureSlots();
+        outfit.Mods.Add(ToRecipe(mod));
+
+        var occupied = new HashSet<GlamSlot>();
+        var appliedPieces = 0;
+        var skippedAlternatives = 0;
+        foreach (var piece in pieces)
+        {
+            GlamSlot? targetSlot = piece.CompatibleSlots.FirstOrDefault(slot => !occupied.Contains(slot));
+            if (targetSlot is null || targetSlot.Value == 0)
+            {
+                skippedAlternatives++;
+                continue;
+            }
+
+            var target = outfit.Slots[targetSlot.Value];
+            target.ItemId = piece.Item.Id;
+            target.Stain1 = 0;
+            target.Stain2 = 0;
+            target.Apply = true;
+            occupied.Add(targetSlot.Value);
+            appliedPieces++;
+        }
+
+        working = outfit;
+        workingNameIsSource = true;
+        workingDirty = false;
+        ApplyWholeLook(working);
+        if (skippedAlternatives > 0)
+            status += $" {skippedAlternatives} additional changed item(s) shared an already-used slot; use their individual Apply button to choose them instead.";
+        else
+            status += $" Loaded {appliedPieces} changed equipment piece(s); every other Dresser slot was set to None.";
+    }
+
+    private void ApplyModPiece(PenumbraModEntry mod, ItemRecord item, GlamSlot slot)
+    {
+        if (!EnsureModEnabled(mod))
+            return;
+
+        working.EnsureSlots();
+        var target = working.Slots[slot];
+        target.ItemId = item.Id;
+        target.Stain1 = 0;
+        target.Stain2 = 0;
+        target.Apply = true;
+
+        working.Mods.RemoveAll(x => string.Equals(x.Directory, mod.Directory, StringComparison.Ordinal));
+        working.Mods.Add(ToRecipe(mod));
+        MarkWorkingChanged();
+
+        if (!TryPlayerIndex(out var index))
+            return;
+
+        if (plugin.Glamourer.ApplySlot(slot, target, index, out var message))
+        {
+            nextLiveEquipmentSyncUtc = DateTime.UtcNow.AddMilliseconds(350);
+            status = $"Applied {item.Name} from {mod.Name} to {slot.DisplayName()}. No other equipment slot was changed.";
+        }
+        else
+        {
+            status = message;
+        }
     }
 
     private void DrawModOptionsEditor(PenumbraModEntry mod)
@@ -187,20 +375,41 @@ public sealed partial class MainWindow
         ImGui.TreePop();
     }
 
-    private void DrawChangedItem(string changed)
+    private void DrawChangedItem(PenumbraModEntry mod, string changed)
     {
-        var matchedItems = plugin.GameData.GetItemsByName(changed);
-        if (matchedItems.Count > 0)
+        var piece = ResolveModPieces(mod).FirstOrDefault(x => string.Equals(x.ChangedName, changed, StringComparison.OrdinalIgnoreCase));
+        if (piece is null)
         {
-            DrawItemIcon(matchedItems[0].Id, 24);
-            ImGui.SameLine();
-            ImGui.TextUnformatted(changed);
-            ImGui.SameLine();
-            ImGui.TextDisabled("[wearable item]");
+            ImGui.BulletText(changed);
+            return;
+        }
+
+        ImGui.PushID($"changed-{changed}");
+        DrawItemIcon(piece.Item.Id, 52);
+        ImGui.SameLine();
+        ImGui.BeginGroup();
+        ImGui.TextUnformatted(piece.Item.Name);
+        ImGui.TextDisabled(string.Join(" / ", piece.CompatibleSlots.Select(x => x.DisplayName())));
+
+        if (piece.CompatibleSlots.Count == 1)
+        {
+            if (ImGui.SmallButton("Apply This Piece"))
+                ApplyModPiece(mod, piece.Item, piece.CompatibleSlots[0]);
         }
         else
         {
-            ImGui.BulletText(changed);
+            for (var i = 0; i < piece.CompatibleSlots.Count; i++)
+            {
+                if (i > 0)
+                    ImGui.SameLine();
+                var slot = piece.CompatibleSlots[i];
+                if (ImGui.SmallButton($"Apply {slot.DisplayName()}"))
+                    ApplyModPiece(mod, piece.Item, slot);
+            }
         }
+
+        ImGui.EndGroup();
+        ImGui.Spacing();
+        ImGui.PopID();
     }
 }
