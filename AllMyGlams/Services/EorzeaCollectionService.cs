@@ -237,7 +237,7 @@ public sealed class EorzeaCollectionService : IDisposable
     private static List<string> ExtractClassTexts(string html, string className)
     {
         var escaped = Regex.Escape(className);
-        var pattern = $@"<(?<tag>[a-z0-9]+)[^>]*class\s*=\s*[\"']([^\"']*\b{escaped}\b[^\"']*)[\"'][^>]*>(?<inner>.*?)</\k<tag>\s*>";
+        var pattern = "<(?<tag>[a-z0-9]+)[^>]*class\\s*=\\s*[\"']([^\"']*\\b" + escaped + "\\b[^\"']*)[\"'][^>]*>(?<inner>.*?)</\\k<tag>\\s*>";
         var regex = new Regex(pattern, RegexOptions.IgnoreCase | RegexOptions.Singleline);
         return regex.Matches(html)
             .Select(match => CleanHtmlText(match.Groups["inner"].Value))
