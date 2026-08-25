@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project Sdk="Dalamud.NET.Sdk/15.0.0">
   <PropertyGroup>
-    <Version>0.2.0.0</Version>
+    <Version>0.2.0.1</Version>
     <Author>JustPixelll</Author>
     <Name>All My Glams</Name>
     <Punchline>Your glamour, Glamourer and Penumbra outfit workspace.</Punchline>
@@ -9,7 +9,7 @@
     <RepoUrl>https://github.com/JustPixelll/AllMyGlams</RepoUrl>
     <Tags>glamour;glamourer;penumbra;mods;wardrobe;utility</Tags>
     <CategoryTags>utility;other</CategoryTags>
-    <Changelog>v0.2: live dresser workflow, explicit None slots, automatic Glamourer/Penumbra refresh, wardrobe overwrite handling, and first Eorzea Collection import/cache integration.</Changelog>
+    <Changelog>v0.2.0.1: updater/load hotfix; remove external EC parser dependency and defer automatic IPC refresh until after plugin load.</Changelog>
     <AcceptsFeedback>true</AcceptsFeedback>
     <FeedbackMessage>Please report bugs and feature requests on GitHub.</FeedbackMessage>
     <Nullable>enable</Nullable>
@@ -17,7 +17,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="AngleSharp" Version="1.7.1" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
   </ItemGroup>
 </Project>

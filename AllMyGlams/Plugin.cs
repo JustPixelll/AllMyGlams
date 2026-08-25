@@ -30,6 +30,7 @@ public sealed class Plugin : IDalamudPlugin
 
     public readonly WindowSystem WindowSystem = new("AllMyGlams");
     private readonly MainWindow mainWindow;
+    private bool initialRefreshPending = true;
 
     public Plugin()
     {
@@ -53,9 +54,8 @@ public sealed class Plugin : IDalamudPlugin
         ClientState.Login += OnLogin;
         Framework.Update += OnFrameworkUpdate;
 
-        // Glamourer can be refreshed even before the character exists; Penumbra and the
-        // live dresser are also populated immediately when the plugin is loaded in-game.
-        mainWindow.RefreshFromIntegrations(true);
+        // Do not invoke other-plugin IPC from the constructor. Dalamud may be in the middle
+        // of installing/reloading us; the first framework tick happens after load completes.
     }
 
     public void Dispose()
@@ -85,8 +85,35 @@ public sealed class Plugin : IDalamudPlugin
         return objectIndex >= 0;
     }
 
-    private void OnFrameworkUpdate(IFramework framework) => mainWindow.TickLiveDresser();
-    private void OnLogin() => mainWindow.RefreshFromIntegrations(true);
+    private void OnFrameworkUpdate(IFramework framework)
+    {
+        if (initialRefreshPending)
+        {
+            initialRefreshPending = false;
+            try
+            {
+                mainWindow.RefreshFromIntegrations(true);
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Initial AllMyGlams integration refresh failed; plugin remains loaded and can retry from the UI.");
+            }
+        }
+
+        mainWindow.TickLiveDresser();
+    }
+
+    private void OnLogin()
+    {
+        try
+        {
+            mainWindow.RefreshFromIntegrations(true);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "AllMyGlams login refresh failed; plugin remains loaded.");
+        }
+    }
 
     private void OnCommand(string command, string args)
     {
