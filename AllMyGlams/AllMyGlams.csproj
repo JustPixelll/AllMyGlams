@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project Sdk="Dalamud.NET.Sdk/15.0.0">
   <PropertyGroup>
-    <Version>0.2.1.0</Version>
+    <Version>0.2.1.1</Version>
     <Author>JustPixelll</Author>
     <Name>All My Glams</Name>
     <Punchline>Your glamour, Glamourer and Penumbra outfit workspace.</Punchline>
@@ -9,7 +9,7 @@
     <RepoUrl>https://github.com/JustPixelll/AllMyGlams</RepoUrl>
     <Tags>glamour;glamourer;penumbra;mods;wardrobe;utility</Tags>
     <CategoryTags>utility;other</CategoryTags>
-    <Changelog>v0.2.1: Dresser mirrors the live character; item/dye/None edits apply instantly; Wardrobe and Mods expand into visible pieces with per-piece apply; full outfit/mod apply clears unused slots to None; cleaner large mod list.</Changelog>
+    <Changelog>v0.2.1.1: fix Glamourer SetItem.V3 stain IPC marshalling for live item/dye/None apply.</Changelog>
     <AcceptsFeedback>true</AcceptsFeedback>
     <FeedbackMessage>Please report bugs and feature requests on GitHub.</FeedbackMessage>
     <Nullable>enable</Nullable>
