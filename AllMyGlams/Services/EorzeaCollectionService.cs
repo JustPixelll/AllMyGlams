@@ -1,8 +1,6 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text.RegularExpressions;
-using AngleSharp.Dom;
-using AngleSharp.Html.Parser;
 
 namespace AllMyGlams.Services;
 
@@ -17,9 +15,11 @@ public sealed class EorzeaCollectionService : IDisposable
     private const string BaseUrl = "https://ffxiv.eorzeacollection.com";
     private static readonly Regex GlamourIdRegex = new(@"/glamour/(?<id>\d+)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex SlotLinkRegex = new(@"/glamours/(?<type>[a-z]+)/\d+", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex TitleTagRegex = new(@"<title[^>]*>(?<inner>.*?)</title>", RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
+    private static readonly Regex TagRegex = new(@"<[^>]+>", RegexOptions.Compiled | RegexOptions.Singleline);
+    private static readonly Regex WhiteSpaceRegex = new(@"\s+", RegexOptions.Compiled);
 
     private readonly HttpClient client;
-    private readonly HtmlParser parser = new();
 
     public EorzeaCollectionService()
     {
@@ -27,7 +27,7 @@ public sealed class EorzeaCollectionService : IDisposable
         {
             Timeout = TimeSpan.FromSeconds(15),
         };
-        client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("AllMyGlams", "0.2"));
+        client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("AllMyGlams", "0.2.0.1"));
         client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("text/html"));
     }
 
@@ -56,6 +56,8 @@ public sealed class EorzeaCollectionService : IDisposable
                 return new EorzeaImportResult(false, null, "The Eorzea Collection response was unexpectedly large, so the import was cancelled.", warnings);
 
             html = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            if (html.Length > 4_000_000)
+                return new EorzeaImportResult(false, null, "The Eorzea Collection response was unexpectedly large, so the import was cancelled.", warnings);
         }
         catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -68,16 +70,17 @@ public sealed class EorzeaCollectionService : IDisposable
 
         try
         {
-            var document = await parser.ParseDocumentAsync(html, cancellationToken).ConfigureAwait(false);
-            var title = Clean(document.QuerySelector(".b-title-text-bold")?.TextContent);
+            var title = ExtractFirstClassText(html, "b-title-text-bold");
             if (string.IsNullOrWhiteSpace(title))
-                title = Clean(document.Title.Split('|', 2)[0]);
+            {
+                var titleMatch = TitleTagRegex.Match(html);
+                if (titleMatch.Success)
+                    title = CleanHtmlText(titleMatch.Groups["inner"].Value).Split('|', 2)[0].Trim();
+            }
             if (string.IsNullOrWhiteSpace(title))
                 title = $"Eorzea Collection {externalId}";
 
-            var author = Clean(document.QuerySelector(".b-user-info-text-name")?.TextContent);
-            if (string.IsNullOrWhiteSpace(author))
-                author = Clean(document.QuerySelector("a[href*='/creator/']")?.TextContent);
+            var author = ExtractFirstClassText(html, "b-user-info-text-name");
 
             var outfit = OutfitRecord.CreateBlank(title);
             outfit.EnsureSlots();
@@ -98,21 +101,17 @@ public sealed class EorzeaCollectionService : IDisposable
 
             var resolved = 0;
             var ringCount = 0;
-            var itemNodes = document.QuerySelectorAll(".b-info-box-item-wrapper");
-            foreach (var itemNode in itemNodes)
+            foreach (var block in ExtractDivBlocksByClass(html, "b-info-box-item-wrapper"))
             {
-                var link = itemNode.QuerySelectorAll("a[href*='/glamours/']")
-                    .Select(x => x.GetAttribute("href"))
-                    .FirstOrDefault(x => !string.IsNullOrWhiteSpace(x) && SlotLinkRegex.IsMatch(x));
-                if (link is null)
+                var slotMatch = SlotLinkRegex.Match(block);
+                if (!slotMatch.Success)
                     continue;
 
-                var slotMatch = SlotLinkRegex.Match(link);
                 var slot = MapSlot(slotMatch.Groups["type"].Value, ref ringCount);
                 if (slot is null)
                     continue;
 
-                var englishItemName = Clean(itemNode.QuerySelector(".c-gear-slot-item-name")?.TextContent);
+                var englishItemName = ExtractFirstClassText(block, "c-gear-slot-item-name");
                 if (string.IsNullOrWhiteSpace(englishItemName))
                     continue;
 
@@ -128,17 +127,15 @@ public sealed class EorzeaCollectionService : IDisposable
                 target.Stain1 = 0;
                 target.Stain2 = 0;
 
-                var dyeNodes = itemNode.QuerySelectorAll(".c-gear-slot-item-info-color");
-                if (dyeNodes.Length > 0)
-                    target.Stain1 = ResolveDye(Clean(dyeNodes[0].TextContent), gameData, warnings, slot.Value, 1);
-                if (dyeNodes.Length > 1)
-                    target.Stain2 = ResolveDye(Clean(dyeNodes[1].TextContent), gameData, warnings, slot.Value, 2);
+                var dyes = ExtractClassTexts(block, "c-gear-slot-item-info-color");
+                if (dyes.Count > 0)
+                    target.Stain1 = ResolveDye(dyes[0], gameData, warnings, slot.Value, 1);
+                if (dyes.Count > 1)
+                    target.Stain2 = ResolveDye(dyes[1], gameData, warnings, slot.Value, 2);
 
                 resolved++;
             }
 
-            // Some two-handed weapons expose an off-hand component using the same item ID.
-            // Preserve that component only when the game data says the item is valid there.
             var main = outfit.Slots[GlamSlot.MainHand];
             var off = outfit.Slots[GlamSlot.OffHand];
             if (main.ItemId != 0 && off.ItemId == 0 && gameData.ItemFitsSlot(main.ItemId, GlamSlot.OffHand))
@@ -161,6 +158,98 @@ public sealed class EorzeaCollectionService : IDisposable
         {
             return new EorzeaImportResult(false, null, $"The Eorzea Collection page could not be parsed: {ex.Message}", warnings);
         }
+    }
+
+    private static IReadOnlyList<string> ExtractDivBlocksByClass(string html, string className)
+    {
+        var blocks = new List<string>();
+        var searchAt = 0;
+
+        while (searchAt < html.Length)
+        {
+            var classAt = html.IndexOf(className, searchAt, StringComparison.OrdinalIgnoreCase);
+            if (classAt < 0)
+                break;
+
+            var open = html.LastIndexOf("<div", classAt, StringComparison.OrdinalIgnoreCase);
+            if (open < 0)
+            {
+                searchAt = classAt + className.Length;
+                continue;
+            }
+
+            var openEnd = html.IndexOf('>', open);
+            if (openEnd < 0 || openEnd < classAt)
+            {
+                searchAt = classAt + className.Length;
+                continue;
+            }
+
+            var end = FindBalancedDivEnd(html, open);
+            if (end <= open)
+            {
+                searchAt = openEnd + 1;
+                continue;
+            }
+
+            blocks.Add(html.Substring(open, end - open));
+            searchAt = end;
+        }
+
+        return blocks;
+    }
+
+    private static int FindBalancedDivEnd(string html, int start)
+    {
+        var depth = 0;
+        var pos = start;
+        while (pos < html.Length)
+        {
+            var nextOpen = html.IndexOf("<div", pos, StringComparison.OrdinalIgnoreCase);
+            var nextClose = html.IndexOf("</div", pos, StringComparison.OrdinalIgnoreCase);
+
+            if (nextClose < 0)
+                return -1;
+
+            if (nextOpen >= 0 && nextOpen < nextClose)
+            {
+                depth++;
+                pos = nextOpen + 4;
+                continue;
+            }
+
+            depth--;
+            var closeEnd = html.IndexOf('>', nextClose);
+            if (closeEnd < 0)
+                return -1;
+            pos = closeEnd + 1;
+
+            if (depth == 0)
+                return pos;
+        }
+
+        return -1;
+    }
+
+    private static string ExtractFirstClassText(string html, string className)
+        => ExtractClassTexts(html, className).FirstOrDefault() ?? string.Empty;
+
+    private static List<string> ExtractClassTexts(string html, string className)
+    {
+        var escaped = Regex.Escape(className);
+        var pattern = $@"<(?<tag>[a-z0-9]+)[^>]*class\s*=\s*[\"']([^\"']*\b{escaped}\b[^\"']*)[\"'][^>]*>(?<inner>.*?)</\k<tag>\s*>";
+        var regex = new Regex(pattern, RegexOptions.IgnoreCase | RegexOptions.Singleline);
+        return regex.Matches(html)
+            .Select(match => CleanHtmlText(match.Groups["inner"].Value))
+            .Where(text => !string.IsNullOrWhiteSpace(text))
+            .ToList();
+    }
+
+    private static string CleanHtmlText(string value)
+    {
+        var withoutTags = TagRegex.Replace(value, " ");
+        var decoded = WebUtility.HtmlDecode(withoutTags);
+        return WhiteSpaceRegex.Replace(decoded, " ").Trim();
     }
 
     private static byte ResolveDye(string text, GameDataService gameData, List<string> warnings, GlamSlot slot, int channel)
@@ -222,7 +311,4 @@ public sealed class EorzeaCollectionService : IDisposable
         externalId = match.Groups["id"].Value;
         return true;
     }
-
-    private static string Clean(string? value)
-        => WebUtility.HtmlDecode(value ?? string.Empty).Trim();
 }
