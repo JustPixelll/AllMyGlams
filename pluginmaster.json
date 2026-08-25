@@ -4,9 +4,9 @@
     "Name": "All My Glams",
     "Punchline": "Your glamour, Glamourer and Penumbra outfit workspace.",
     "Description": "Use your character as the viewer for a live complete-look dresser, reuse Glamourer designs, keep a local wardrobe, manage equipment-affecting Penumbra mods, and cache openly attributed public glamour recipes from supported sources.",
-    "Changelog": "v0.2.1: live Dresser mirroring; instant item/dye/None apply; expandable Wardrobe and Mods with per-piece apply; full outfit/mod apply clears unused slots to None; cleaner large mod list.",
+    "Changelog": "v0.2.1.1: fix Glamourer SetItem.V3 stain IPC marshalling for live item/dye/None apply.",
     "InternalName": "AllMyGlams",
-    "AssemblyVersion": "0.2.1.0",
+    "AssemblyVersion": "0.2.1.1",
     "RepoUrl": "https://github.com/JustPixelll/AllMyGlams",
     "ApplicableVersion": "any",
     "CategoryTags": [
@@ -14,10 +14,10 @@
     ],
     "DalamudApiLevel": 15,
     "ImageUrls": [],
-    "DownloadLinkInstall": "https://github.com/JustPixelll/AllMyGlams/releases/download/v0.2.1.0/latest.zip",
-    "DownloadLinkUpdate": "https://github.com/JustPixelll/AllMyGlams/releases/download/v0.2.1.0/latest.zip",
+    "DownloadLinkInstall": "https://github.com/JustPixelll/AllMyGlams/releases/download/v0.2.1.1/latest.zip",
+    "DownloadLinkUpdate": "https://github.com/JustPixelll/AllMyGlams/releases/download/v0.2.1.1/latest.zip",
     "IsHide": false,
     "IsTestingExclusive": false,
-    "LastUpdate": "1787658634"
+    "LastUpdate": "1787659549"
   }
 ]
